@@ -5,6 +5,18 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-03] deploy | updated Fly app to latest source image
+- Deployed `sensecv-api` to Fly.io with `flyctl deploy -a sensecv-api`.
+- New image:
+  `sensecv-api:deployment-01KT76K9AY62E3FT637KJ9N7SV`.
+- Machine `0807567b062618` is version `2` and reached `started` state.
+- Verified `https://sensecv-api.fly.dev/health` returned HTTP 200 with
+  `{status:"ok", clips:0}`. This is expected for the source-only image before
+  importing datasets onto `/data/clips`.
+- Verified `/api/clips` returned an empty clip list and `/api/upload-zip`
+  returned the controlled missing-zip error.
+- Pages touched: [[deployment-operations]], [[log]].
+
 ## [2026-06-03] docs | GitHub remote and current SenseCV project state
 - Captured the GitHub project state in [[github-repository]]: local branch
   `master`, remote `origin https://github.com/IsaqueEfraimIFCE/sensecv.git`,

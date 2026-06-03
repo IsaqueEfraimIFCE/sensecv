@@ -86,19 +86,20 @@ Verified on 2026-06-03:
 
 ```text
 Public URL: https://sensecv-api.fly.dev/
-Health: /health HTTP 200, clips=32
-Image: sensecv-api:deployment-01KT6Q473JV1BT873TH2DGWE12
+Health: /health HTTP 200, clips=0
+Image: sensecv-api:deployment-01KT76K9AY62E3FT637KJ9N7SV
 Machine: 0807567b062618
+Machine version: 2
+Machine state: started
 ```
 
-`/api/clips` lists `SenseCV-02-06-2026-IFCE-Gimbal/01` through `/32`.
-`/api/data/0` returns 202 `times`, 202 `accel`, and 202 `external_input`
-samples, with 57 active input frames.
+`/api/clips` returns `{clips:[], groups:[], total:0}` for the current
+source-only image until a dataset is imported onto the Fly volume.
 `/api/upload-zip` is live and returns a controlled 400 when no zip file is
 provided.
 
-Note: this observed deployment still had the initial 02-06-2026 gimbal dataset
-available. The current GitHub-ready source image excludes bundled datasets; a
-fresh deploy should import datasets through `/api/upload-zip` or `/data/clips`.
+The current GitHub-ready source image excludes bundled datasets. Import
+datasets through `/api/upload-zip` or place valid clip folders under
+`/data/clips`.
 
 
