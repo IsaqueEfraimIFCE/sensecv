@@ -1,7 +1,7 @@
 ﻿---
 type: meta
 tags: [index, catalog]
-updated: 2026-05-31
+updated: 2026-06-03
 ---
 
 # Wiki Index
@@ -28,6 +28,7 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[history-json]] | Pruned `history.json` export ledger and record shape | `app.py` |
 | [[SenseCV-dataset]] | Batch walking-only datasets with provenance CSVs | `export_SenseCV.py` |
 | [[dronet-samsung-samples]] | DroNet random-frame inference over the Samsung 30-05-2026 SenseCV root | `run_samsung_dronet_samples.py` |
+| [[dronet-sensecv-02062026-3fps]] | DroNet 3 FPS frame classifications and contact sheets for the 02-06-2026 SenseCV gimbal root | `run_sensecv_02062026_dronet_3fps.py` |
 
 ## Concepts
 | Page | Summary | Code |
@@ -41,6 +42,6 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[video-sensor-sync]] | Playing video with charts/cursor/timeline in lockstep | `templates/index.html` |
 
 ## Page count
-- Meta: 3; Entities: 8; Concepts: 7 -> **18 pages**
+- Meta: 3; Entities: 10; Concepts: 7 -> **20 pages**
 
 

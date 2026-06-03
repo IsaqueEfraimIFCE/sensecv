@@ -5,6 +5,22 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-03] ingest | DroNet 3 FPS classifications for SenseCV 02-06-2026 gimbal
+- Added `run_sensecv_02062026_dronet_3fps.py`, which imports the local DroNet
+  model from `C:\Users\Isaque\Desktop\dronet`, samples every
+  `SenseCV-02-06-2026-IFCE-Gimbal` clip at 3 FPS, and writes annotated PNG
+  classifications.
+- Latest run processed 32 clip folders and wrote 666 frame classifications to
+  `dronet_sensecv_02062026_3fps/`.
+- Each output subfolder contains `classifications.csv`, annotated
+  `classification_*.png` images, and a `contact_sheet.png` with all generated
+  images for that clip.
+- Aggregate outputs are `all_classifications.csv` and `summary.json`.
+- Highest mean collision clips were `21`, `25`, `26`, `22`, `32`, `23`, `24`,
+  and `31`; these remain DroNet inspection scores, not validated indoor labels.
+- Pages touched: [[overview]], [[index]], [[dronet-sensecv-02062026-3fps]],
+  [[log]].
+
 ## [2026-06-03] feature | GitHub-ready SenseCV app, zip dataset import, Fly rename
 - Added GitHub-facing project files: `README.md`, `.gitignore`,
   `requirements.txt`, `Dockerfile`, `fly.toml`, and `.dockerignore`.

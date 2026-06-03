@@ -2,7 +2,7 @@
 type: meta
 tags: [overview, synthesis]
 code_refs: [app.py, templates/index.html]
-updated: 2026-05-31
+updated: 2026-06-03
 ---
 
 # SenseCV - Overview
@@ -59,6 +59,8 @@ source folder and includes an `exports` group for reviewing exported clips.
 - [[video-sensor-sync]] - playing video with charts/cursor in lockstep.
 - [[dronet-samsung-samples]] - random-frame DroNet inference over the Samsung
   30-05-2026 gimbal dataset.
+- [[dronet-sensecv-02062026-3fps]] - fixed 3 FPS DroNet classifications and
+  contact sheets over the 02-06-2026 gimbal dataset.
 
 ## End-to-end flow
 
