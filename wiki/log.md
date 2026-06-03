@@ -5,6 +5,19 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-03] fix | Fly no-dataset startup and warm machine
+- Fixed the viewer boot path for source-only Fly deployments with zero clips.
+  `templates/index.html` now renders a no-dataset state and keeps the zip
+  import controls available instead of calling `loadClip(0)`.
+- Updated `fly.toml` to `min_machines_running = 1` so `sensecv-api` keeps one
+  machine warm during interactive testing.
+- Deployed new image:
+  `sensecv-api:deployment-01KT77HJCXDTV5X7V7BKWNN456`.
+- Verified machine `0807567b062618` is version `3`, state `started`;
+  `/health` returns HTTP 200 with `{status:"ok", clips:0}`; the served root
+  HTML includes `showNoClipsState`.
+- Pages touched: [[deployment-operations]], [[log]].
+
 ## [2026-06-03] deploy | updated Fly app to latest source image
 - Deployed `sensecv-api` to Fly.io with `flyctl deploy -a sensecv-api`.
 - New image:

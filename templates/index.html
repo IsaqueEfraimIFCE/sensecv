@@ -515,6 +515,15 @@ function buildGroupSelect(activeIdx) {
   const first = groupFirstIndices();
   const activeGroup = CLIP_GROUPS[activeIdx] || 'Clipes';
   sel.innerHTML = '';
+  if (!CLIPS.length) {
+    const opt = document.createElement('option');
+    opt.value = '0';
+    opt.textContent = 'Sem datasets';
+    sel.appendChild(opt);
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
   first.forEach((idx, group) => {
     const opt = document.createElement('option');
     opt.value = String(idx);
@@ -529,6 +538,15 @@ function buildClipSelect(activeIdx) {
   const exportedIdx = new Set(HISTORY.map(h => h.source_idx));
   const sel = document.getElementById('clip-select');
   sel.innerHTML = '';
+  if (!CLIPS.length) {
+    const opt = document.createElement('option');
+    opt.value = '0';
+    opt.textContent = 'Importe um dataset .zip';
+    sel.appendChild(opt);
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
   let groupEl = null;
   let currentGroup = null;
   CLIPS.forEach((name, i) => {
@@ -604,6 +622,33 @@ async function loadClip(idx) {
   // Automatically prefer lateral-deviation cuts; use other modes only as fallbacks.
   requestDronet(true);
   runAutoSuggest();
+}
+
+function showNoClipsState(){
+  TOTAL = CLIPS.length;
+  DATA = null;
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  buildClipSelect(0);
+  document.getElementById('clip-pos').textContent = '0';
+  document.getElementById('clip-total').textContent = '0';
+  document.getElementById('hdr-name').textContent = 'Sem dataset';
+  document.getElementById('hdr-fps').textContent = '–';
+  document.getElementById('hdr-dur').textContent = '–';
+  document.getElementById('hdr-frames').textContent = '–';
+  document.getElementById('t-cur').textContent = '0.000';
+  document.getElementById('t-dur').textContent = '–';
+  document.getElementById('t-frame').textContent = '0';
+  document.getElementById('btn-prev').disabled = true;
+  document.getElementById('btn-next').disabled = true;
+  cropStart = cropEnd = null;
+  document.getElementById('crop-start-disp').textContent = '–';
+  document.getElementById('crop-end-disp').textContent = '–';
+  resetDronetPanel();
+  updateExportBtn();
+  hideOverlay();
+  showToast('Importe um dataset SenseCV .zip para iniciar', 'ok');
 }
 
 // ═══ Name auto-increment ════════════════════════
@@ -1107,7 +1152,8 @@ async function uploadZipDataset(){
     CLIP_GROUPS = d.groups || CLIP_GROUPS;
     TOTAL = d.total ?? CLIPS.length;
     document.getElementById('clip-total').textContent = TOTAL;
-    buildClipSelect(currentIdx);
+    if (TOTAL > 0) await loadClip(0);
+    else showNoClipsState();
     input.value = '';
     showToast(`OK: ${d.clips_added} clipes importados de ${d.dataset}`,'ok');
   } catch(e) {
@@ -1239,9 +1285,13 @@ document.addEventListener('keydown',e=>{
 });
 
 // ═══ Boot ═══════════════════════════════════════
-buildClipSelect(0);
 renderHistory();
-loadClip(0);
+if (TOTAL > 0) {
+  buildClipSelect(0);
+  loadClip(0);
+} else {
+  showNoClipsState();
+}
 </script>
 </body>
 </html>

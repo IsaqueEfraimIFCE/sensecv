@@ -33,6 +33,14 @@ Environment in `fly.toml`:
 | `SENSECV_HISTORY_FILE=/data/history.json` | Persistent export history |
 | `SENSECV_UPLOADS_DIR=/data/clips` | Destination for uploaded SenseCV zip datasets |
 
+The service keeps one machine warm for interactive use:
+
+```text
+auto_stop_machines = "stop"
+auto_start_machines = true
+min_machines_running = 1
+```
+
 ## Deploy
 
 ```powershell
@@ -87,14 +95,16 @@ Verified on 2026-06-03:
 ```text
 Public URL: https://sensecv-api.fly.dev/
 Health: /health HTTP 200, clips=0
-Image: sensecv-api:deployment-01KT76K9AY62E3FT637KJ9N7SV
+Image: sensecv-api:deployment-01KT77HJCXDTV5X7V7BKWNN456
 Machine: 0807567b062618
-Machine version: 2
+Machine version: 3
 Machine state: started
 ```
 
 `/api/clips` returns `{clips:[], groups:[], total:0}` for the current
 source-only image until a dataset is imported onto the Fly volume.
+The root viewer initializes in a no-dataset state instead of calling
+`loadClip(0)`, so the zip import panel remains usable with zero clips.
 `/api/upload-zip` is live and returns a controlled 400 when no zip file is
 provided.
 
