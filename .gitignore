@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Runtime state
+server.err.log
+server.out.log
+*.log
+history.json
+exports/
+uploaded_datasets/
+
+# Large/local datasets and generated outputs
+2026_*/
+SenseCV dataset/
+SenseCV dataset (lateral)/
+Supermercado dataset/
+Supermercado dataset (lateral)/
+SenseCV-*/
+Supermercado dataset*/
+dronet_samsung_random_samples/
+dronet_sensecv_02062026_3fps/
+*.mp4
+*.zip
+
+# Local tooling
+.claude/
+.codex/
+.agents/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

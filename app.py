@@ -1,0 +1,1736 @@
+from flask import Flask, request, Response, render_template, jsonify
+import json, os, re, subprocess, math, zipfile, shutil
+from datetime import datetime
+from collections import OrderedDict
+import numpy as np
+
+CLIPS_DIR    = os.path.dirname(os.path.abspath(__file__))
+EXPORTS_DIR  = os.environ.get('SENSECV_EXPORTS_DIR', os.path.join(CLIPS_DIR, 'exports'))
+HISTORY_FILE = os.environ.get('SENSECV_HISTORY_FILE', os.path.join(CLIPS_DIR, 'history.json'))
+UPLOADS_DIR  = os.environ.get('SENSECV_UPLOADS_DIR', os.path.join(CLIPS_DIR, 'uploaded_datasets'))
+os.makedirs(EXPORTS_DIR, exist_ok=True)
+os.makedirs(UPLOADS_DIR, exist_ok=True)
+
+app = Flask(__name__, template_folder=os.path.join(CLIPS_DIR, 'templates'))
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('SENSECV_MAX_UPLOAD_BYTES', str(2 * 1024 * 1024 * 1024)))
+
+@app.route('/health')
+def health():
+    refresh_clips()
+    return jsonify({'status': 'ok', 'clips': len(CLIPS)})
+
+@app.after_request
+def no_cache(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+# ─── Clips ───────────────────────────────────────────────────────────────────
+
+# Extra input roots to scan for clip subfolders, in addition to CLIPS_DIR.
+EXTRA_CLIP_ROOTS = [
+    r"C:\Users\Isaque\Downloads\SenseCV-23-05-2023-IFCE\SenseCV-23-05-2023-IFCE",
+    r"C:\Users\Isaque\Desktop\SenseCV-26-05-2026-IFCE",
+    r"C:\Users\Isaque\Downloads\SenseCV-27-05-2026-IFCE",
+    r"C:\Users\Isaque\Desktop\SenseCV-27-05-2026-IFCE-Gimbal",
+    r"C:\Users\Isaque\Downloads\SenseCV-30-05-2026-IFCE-Gimbal-Samsung\SenseCV-30-05-2026-IFCE-Gimbal-Samsung",
+    r"C:\Users\Isaque\Downloads\SenseCV-30-05-2026-IFCE-Gimbal-Poco\SenseCV-30-05-2026-IFCE-Gimbal-Poco",
+    os.path.join(CLIPS_DIR, "SenseCV-02-06-2026-IFCE-Gimbal", "SenseCV-02-06-2026-IFCE-Gimbal"),
+]
+ENV_EXTRA_CLIP_ROOTS = [
+    p.strip() for p in (
+        os.environ.get('SENSECV_EXTRA_CLIP_ROOTS')
+        or ''
+    ).split(os.pathsep)
+    if p.strip()
+]
+EXTRA_CLIP_ROOTS.extend(ENV_EXTRA_CLIP_ROOTS + [UPLOADS_DIR])
+
+# Maps clip display name -> absolute folder path. Populated by find_clips().
+CLIP_PATHS = {}
+CLIP_VIDEO_PATHS = {}
+CLIP_GROUPS = {}
+# Display names that are filmed horizontally the whole time (the SenseCV roots).
+# For these we skip vertical-orientation detection and only segment walking.
+WALKING_ONLY = set()
+
+def _clip_video_file(p):
+    video = os.path.join(p, 'video.mp4')
+    if os.path.isfile(video):
+        return video
+    if not os.path.isdir(p):
+        return None
+    mp4s = sorted(
+        os.path.join(p, name) for name in os.listdir(p)
+        if name.lower().endswith('.mp4') and os.path.isfile(os.path.join(p, name))
+    )
+    return mp4s[0] if mp4s else None
+
+def _is_clip_dir(p):
+    return os.path.isdir(p) and _clip_video_file(p) is not None \
+        and os.path.isfile(os.path.join(p,'frames.json'))
+
+def _safe_name(name):
+    name = re.sub(r'[^\w.\-]+', '_', os.path.splitext(os.path.basename(name))[0]).strip('._')
+    return name or 'dataset'
+
+def _unique_dir(parent, name):
+    base = _safe_name(name)
+    target = os.path.join(parent, base)
+    if not os.path.exists(target):
+        return target
+    i = 2
+    while True:
+        candidate = os.path.join(parent, f'{base}_{i}')
+        if not os.path.exists(candidate):
+            return candidate
+        i += 1
+
+def _safe_extract_zip(zip_file, target_dir):
+    os.makedirs(target_dir, exist_ok=True)
+    for info in zip_file.infolist():
+        normalized = info.filename.replace('\\', '/')
+        parts = [p for p in normalized.split('/') if p]
+        if not parts or normalized.startswith('/') or any(p == '..' for p in parts):
+            raise ValueError(f'unsafe zip path: {info.filename}')
+        out_path = os.path.abspath(os.path.join(target_dir, *parts))
+        target_abs = os.path.abspath(target_dir)
+        if os.path.commonpath([target_abs, out_path]) != target_abs:
+            raise ValueError(f'unsafe zip path: {info.filename}')
+        if info.is_dir():
+            os.makedirs(out_path, exist_ok=True)
+            continue
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with zip_file.open(info) as src, open(out_path, 'wb') as dst:
+            shutil.copyfileobj(src, dst)
+
+def _discover_clip_dirs(root, recursive=False):
+    if not os.path.isdir(root):
+        return []
+    found = []
+    if not recursive:
+        for name in sorted(os.listdir(root)):
+            p = os.path.join(root, name)
+            if _is_clip_dir(p):
+                found.append((name, p, None))
+        return found
+    for current, dirs, _files in os.walk(root):
+        if _is_clip_dir(current):
+            rel = os.path.relpath(current, root).replace(os.sep, '/')
+            first = rel.split('/', 1)[0] if rel != '.' else os.path.basename(os.path.normpath(root))
+            found.append((rel, current, first))
+            dirs[:] = []
+    return sorted(found, key=lambda item: item[0])
+
+def find_clips():
+    """Scan CLIPS_DIR plus any EXTRA_CLIP_ROOTS for clip subfolders.
+
+    Clips in the primary root keep their bare folder name (so existing history
+    and exports stay valid); clips from extra roots are prefixed with the root
+    folder name to keep display names unique across roots.
+    """
+    CLIP_PATHS.clear()
+    CLIP_VIDEO_PATHS.clear()
+    CLIP_GROUPS.clear()
+    WALKING_ONLY.clear()
+    clips = []
+    # (root, label, walking_only). The primary root is the supermarket footage
+    # (held vertical); the extra roots are filmed horizontally throughout.
+    recursive_roots = set(ENV_EXTRA_CLIP_ROOTS + [UPLOADS_DIR])
+    roots = [(CLIPS_DIR, None, False, False)] + [
+        (r, os.path.basename(os.path.normpath(r)), True, r in recursive_roots) for r in EXTRA_CLIP_ROOTS]
+    if os.path.isdir(EXPORTS_DIR):
+        roots.append((EXPORTS_DIR, 'exports', True, False))
+    for root, label, walking_only, recursive in roots:
+        if not os.path.isdir(root):
+            continue
+        for display_name, clip_dir, discovered_group in _discover_clip_dirs(root, recursive):
+            display = display_name if label is None else f"{label}/{display_name}"
+            group = discovered_group if recursive and discovered_group else label or 'Supermercado Telefrango'
+            CLIP_PATHS[display] = clip_dir
+            CLIP_VIDEO_PATHS[display] = _clip_video_file(clip_dir)
+            CLIP_GROUPS[display] = group
+            if walking_only:
+                WALKING_ONLY.add(display)
+            clips.append(display)
+    return clips
+
+CLIPS = find_clips()
+
+def refresh_clips():
+    global CLIPS
+    CLIPS = find_clips()
+    return CLIPS
+
+def clip_path(idx):
+    return CLIP_PATHS[CLIPS[idx]]
+
+def clip_video_path(idx):
+    return CLIP_VIDEO_PATHS[CLIPS[idx]]
+
+def clip_groups():
+    return [CLIP_GROUPS.get(name, '') for name in CLIPS]
+
+# ─── History ─────────────────────────────────────────────────────────────────
+
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+        pruned = prune_history_to_exports(history)
+        if len(pruned) != len(history):
+            save_history(pruned)
+        return pruned
+    return []
+
+def save_history(h):
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(h, f, indent=2, ensure_ascii=False)
+
+def list_export_folders():
+    if not os.path.isdir(EXPORTS_DIR):
+        return []
+    return sorted(
+        name for name in os.listdir(EXPORTS_DIR)
+        if os.path.isdir(os.path.join(EXPORTS_DIR, name))
+    )
+
+def prune_history_to_exports(history):
+    export_folders = set(list_export_folders())
+    return [entry for entry in history if entry.get('folder') in export_folders]
+
+def get_next_number():
+    used = set()
+    for name in list_export_folders():
+        m = re.match(r'^(\d+)(?:_|$)', name)
+        if m:
+            used.add(int(m.group(1)))
+    number = 1
+    while number in used:
+        number += 1
+    return number
+
+def name_exists(folder_name):
+    return os.path.exists(os.path.join(EXPORTS_DIR, folder_name))
+
+def learned_walking_window(idx):
+    """Return the latest exported walking crop for this source clip, if any."""
+    source = CLIPS[idx]
+    for entry in reversed(load_history()):
+        if entry.get('source_idx') != idx and entry.get('source_clip') != source:
+            continue
+        start = entry.get('start')
+        end = entry.get('end')
+        if start is None or end is None or end <= start:
+            continue
+        return round(float(start), 3), round(float(end), 3)
+    return None
+
+# ─── Data processing ─────────────────────────────────────────────────────────
+
+def load_json(folder, name):
+    with open(os.path.join(folder, name), 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+def interp_at_times(src_t, src_v, query_t):
+    n = len(src_t); result = []
+    for qt in query_t:
+        idx = int(np.searchsorted(src_t, qt))
+        if idx <= 0:            result.append(src_v[0].tolist())
+        elif idx >= n:          result.append(src_v[-1].tolist())
+        else:
+            t0,t1 = src_t[idx-1],src_t[idx]; v0,v1 = src_v[idx-1],src_v[idx]
+            f = (qt-t0)/(t1-t0) if t1!=t0 else 0.
+            result.append((v0+f*(v1-v0)).tolist())
+    return result
+
+def external_input_at_times(folder, query_t):
+    path = os.path.join(folder, 'external_sensors.json')
+    if not os.path.isfile(path):
+        return []
+    samples = load_json(folder, 'external_sensors.json').get('external_sensors', [])
+    if not samples:
+        return []
+    sensor_t = np.array([s.get('time_usec', 0) for s in samples], dtype=np.float64)
+    buttons = np.array([1 if int(s.get('button', s.get('input', 0)) or 0) == 1 else 0
+                        for s in samples], dtype=np.int8)
+    result = []
+    for qt in query_t:
+        idx = int(np.searchsorted(sensor_t, qt, side='right')) - 1
+        if idx < 0:
+            result.append(0)
+        elif idx >= len(buttons):
+            result.append(int(buttons[-1]))
+        else:
+            result.append(int(buttons[idx]))
+    return result
+
+def compute_velocities(acc_data, rot_data, ft_us):
+    acc_t = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    acc_v = np.array([[a['x'],a['y'],a['z']] for a in acc_data])
+    rot_t = np.array([r['time_usec'] for r in rot_data], dtype=np.float64)
+    rot_v = np.array([[r['x'],r['y'],r['z']] for r in rot_data])
+    ft    = np.array(ft_us, dtype=np.float64)
+
+    n = min(200, len(acc_v)); g_phone = acc_v[:n].mean(0)
+    G = float(np.linalg.norm(g_phone)); G = G if G>1e-3 else 9.81
+    g_hat = g_phone/G; g_world = np.array([0.,0.,1.])
+    cross = np.cross(g_hat, g_world); dot = float(np.dot(g_hat, g_world)); cn = float(np.linalg.norm(cross))
+    if cn<1e-7: q = np.array([1.,0.,0.,0.]) if dot>0 else np.array([0.,1.,0.,0.])
+    else:
+        s = np.sqrt(max(0.,(1.+dot)*2.)); q = np.array([s/2,cross[0]/s,cross[1]/s,cross[2]/s]); q/=np.linalg.norm(q)
+
+    def qmul(a,b):
+        w1,x1,y1,z1=a; w2,x2,y2,z2=b
+        return np.array([w1*w2-x1*x2-y1*y2-z1*z2, w1*x2+x1*w2+y1*z2-z1*y2,
+                         w1*y2-x1*z2+y1*w2+z1*x2, w1*z2+x1*y2-y1*x2+z1*w2])
+    def qrot(q,v):
+        w,x,y,z=q
+        return np.array([
+            (1-2*(y*y+z*z))*v[0]+2*(x*y-z*w)*v[1]+2*(x*z+y*w)*v[2],
+            2*(x*y+z*w)*v[0]+(1-2*(x*x+z*z))*v[1]+2*(y*z-x*w)*v[2],
+            2*(x*z-y*w)*v[0]+2*(y*z+x*w)*v[1]+(1-2*(x*x+y*y))*v[2],
+        ])
+
+    vel=np.zeros(3); rec=[(rot_t[0],vel.copy())]; prev_t=rot_t[0]
+    for i in range(1,len(rot_t)):
+        t=rot_t[i]; dt=(t-prev_t)/1e6; prev_t=t
+        if dt<=0 or dt>0.05: rec.append((t,vel.copy())); continue
+        om=rot_v[i]; on=float(np.linalg.norm(om))
+        if on>1e-8:
+            ha=on*dt/2; ax=om/on
+            dq=np.array([np.cos(ha),np.sin(ha)*ax[0],np.sin(ha)*ax[1],np.sin(ha)*ax[2]])
+            q=qmul(q,dq); q/=np.linalg.norm(q)
+        idx=min(max(int(np.searchsorted(acc_t,t)),0),len(acc_v)-1)
+        aw=qrot(q,acc_v[idx]); an=aw/max(float(np.linalg.norm(aw)),1e-6)
+        err=np.cross(an,np.array([0.,0.,1.])); cor=np.array([1.,err[0]*.005,err[1]*.005,err[2]*.005])
+        q=qmul(q,cor/np.linalg.norm(cor)); q/=np.linalg.norm(q)
+        aw=qrot(q,acc_v[idx]); al=aw-np.array([0.,0.,G])
+        al=np.where(np.abs(al)<0.25,0.,al); vel+=al*dt; vel*=0.998
+        rec.append((t,vel.copy()))
+
+    vt=np.array([r[0] for r in rec]); vv=np.array([r[1] for r in rec])
+    result=[]
+    for f in ft:
+        i=min(max(int(np.searchsorted(vt,f)),0),len(vv)-1); v=vv[i]
+        result.append({'vx':float(v[0]),'vy':float(v[1]),'vz':float(v[2]),'speed':float(np.linalg.norm(v))})
+    return result
+
+_cache = OrderedDict()
+_walking_template_cache = {'mtime': None, 'templates': None, 'durations': None}
+_walking_classifier_cache = {'mtime': None, 'model': None}
+_classifier_feature_cache = OrderedDict()
+
+def get_clip_data(idx):
+    key = CLIPS[idx]
+    if key in _cache: _cache.move_to_end(key); return _cache[key]
+    folder = clip_path(idx)
+    frames   = load_json(folder,'frames.json')['frames']
+    acc_data = load_json(folder,'accelerations.json')['accelerations']
+    rot_data = load_json(folder,'rotations.json')['rotations']
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'],a['y'],a['z']] for a in acc_data])
+    rt = np.array([r['time_usec'] for r in rot_data], dtype=np.float64)
+    rv = np.array([[r['x'],r['y'],r['z']] for r in rot_data])
+    t0=float(ft[0]); secs=[(float(f)-t0)/1e6 for f in ft]
+    fps=float(1e6/np.median(np.diff(ft)))
+    data={'fps':round(fps,3),'duration':secs[-1],'times':secs,
+          'accel':interp_at_times(at,av,ft),'rotation':interp_at_times(rt,rv,ft),
+          'velocity':compute_velocities(acc_data,rot_data,ft.tolist()),
+          'external_input':external_input_at_times(folder, ft),
+          'name':key,'index':idx,'total':len(CLIPS)}
+    _cache[key]=data
+    if len(_cache)>5: _cache.popitem(last=False)
+    return data
+
+# ─── Sensor data save ────────────────────────────────────────────────────────
+
+def save_sensor_data(clip_idx, start_sec, end_sec, export_folder):
+    folder = clip_path(clip_idx)
+    frames_raw = load_json(folder,'frames.json')
+    acc_raw    = load_json(folder,'accelerations.json')
+    rot_raw    = load_json(folder,'rotations.json')
+    t0_usec = frames_raw['frames'][0]['time_usec']
+    t_start = t0_usec + start_sec * 1e6
+    t_end   = t0_usec + end_sec   * 1e6
+    # re-base time_usec so t_start → 0
+    def rebase(t): return t - t_start
+
+    filtered_frames = [
+        {**f, 'time_usec': int(rebase(f['time_usec'])),
+               'sensor_timestamp': int(rebase(f['sensor_timestamp']))}
+        for f in frames_raw['frames']
+        if t_start <= f['time_usec'] <= t_end
+    ]
+    # reset frame_id
+    for i, fr in enumerate(filtered_frames): fr['frame_id'] = i
+
+    filtered_acc = [
+        {**a, 'time_usec': int(rebase(a['time_usec']))}
+        for a in acc_raw['accelerations'] if t_start <= a['time_usec'] <= t_end
+    ]
+    filtered_rot = [
+        {**r, 'time_usec': int(rebase(r['time_usec']))}
+        for r in rot_raw['rotations'] if t_start <= r['time_usec'] <= t_end
+    ]
+    external_raw = None
+    external_path = os.path.join(folder, 'external_sensors.json')
+    if os.path.isfile(external_path):
+        external_raw = load_json(folder, 'external_sensors.json')
+    filtered_external = []
+    if external_raw:
+        filtered_external = [
+            {**s, 'time_usec': int(rebase(s['time_usec']))}
+            for s in external_raw.get('external_sensors', [])
+            if t_start <= s.get('time_usec', -1) <= t_end
+        ]
+    with open(os.path.join(export_folder,'frames.json'),'w') as f:
+        json.dump({'frames': filtered_frames}, f)
+    with open(os.path.join(export_folder,'accelerations.json'),'w') as f:
+        json.dump({'accelerations': filtered_acc}, f)
+    with open(os.path.join(export_folder,'rotations.json'),'w') as f:
+        json.dump({'rotations': filtered_rot}, f)
+    if external_raw is not None:
+        with open(os.path.join(export_folder,'external_sensors.json'),'w') as f:
+            json.dump({'external_sensors': filtered_external}, f)
+
+# ─── Suggest crop ────────────────────────────────────────────────────────────
+
+def _orientation_walking_masks(idx):
+    """
+    Per-frame boolean masks for phone orientation and gait.
+
+    vertical (portrait):
+      ay/|a| > 0.95  →  gravity nearly along phone y-axis (portrait)
+      az/|a| < 0.12  →  screen not facing up/down (camera pointing forward)
+      Both smoothed over a 1 s window.
+      Calibrated against 5 clips with known ground-truth start times
+      (clip1→13.0s, clip2→11.5s, clip3→none, clip4→9.0s, clip5→none): 5/5.
+
+    walking:
+      During a walk the gravity-magnitude |a| oscillates with each step,
+      so the rolling standard deviation of |a| over ~1 s rises well above
+      the near-static value. std > 0.5 m/s² flags sustained gait.
+    """
+    folder = clip_path(idx)
+    frames   = load_json(folder, 'frames.json')['frames']
+    acc_data = load_json(folder, 'accelerations.json')['accelerations']
+
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data])
+    if len(ft) < 2 or len(av) == 0:
+        raise ValueError('sensor data is empty or too short')
+
+    t0 = float(ft[0])
+    secs = (ft - t0) / 1e6
+    fps  = float(1e6 / np.median(np.diff(ft)))
+
+    amag = np.empty(len(ft))
+    ay_n = np.empty(len(ft))
+    az_n = np.empty(len(ft))
+    for i, a_usec in enumerate(ft):
+        j = min(max(int(np.searchsorted(at, a_usec)), 0), len(av)-1)
+        a = av[j]
+        m = math.sqrt(a[0]**2 + a[1]**2 + a[2]**2)
+        amag[i] = m
+        ay_n[i] = abs(a[1]) / m if m > 1 else 0.
+        az_n[i] = abs(a[2]) / m if m > 1 else 0.
+
+    # Smooth / window over 1 s. Keep the kernel no longer than the clip; numpy
+    # returns the larger length for mode='same' when the kernel is longer.
+    W = min(len(ft), max(1, int(fps * 1.0)))
+    kernel = np.ones(W) / W
+    s_ay = np.convolve(ay_n, kernel, mode='same')
+    s_az = np.convolve(az_n, kernel, mode='same')
+    vertical = (s_ay > 0.95) & (s_az < 0.12)
+
+    # Rolling std of |a| over the same window → gait energy
+    mean_mag = np.convolve(amag, kernel, mode='same')
+    var_mag  = np.convolve((amag - mean_mag) ** 2, kernel, mode='same')
+    std_mag  = np.sqrt(np.maximum(var_mag, 0.))
+    walking  = std_mag > 0.5
+
+    return secs, fps, vertical, walking
+
+
+def _walking_feature_series(idx):
+    """Features used to compare new clips against exported walking crops."""
+    folder = clip_path(idx)
+    frames   = load_json(folder, 'frames.json')['frames']
+    acc_data = load_json(folder, 'accelerations.json')['accelerations']
+
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data], dtype=np.float64)
+    if len(ft) < 2 or len(av) == 0:
+        raise ValueError('sensor data is empty or too short')
+
+    t0 = float(ft[0])
+    secs = (ft - t0) / 1e6
+    fps = float(1e6 / np.median(np.diff(ft)))
+
+    aligned = np.empty((len(ft), 3), dtype=np.float64)
+    for i, a_usec in enumerate(ft):
+        j = min(max(int(np.searchsorted(at, a_usec)), 0), len(av) - 1)
+        aligned[i] = av[j]
+
+    amag = np.linalg.norm(aligned, axis=1)
+    ay_n = np.abs(aligned[:, 1]) / np.maximum(amag, 1e-6)
+    az_n = np.abs(aligned[:, 2]) / np.maximum(amag, 1e-6)
+
+    W = min(len(ft), max(1, int(fps * 1.0)))
+    kernel = np.ones(W) / W
+    s_ay = np.convolve(ay_n, kernel, mode='same')
+    s_az = np.convolve(az_n, kernel, mode='same')
+
+    mean_mag = np.convolve(amag, kernel, mode='same')
+    var_mag = np.convolve((amag - mean_mag) ** 2, kernel, mode='same')
+    std_mag = np.sqrt(np.maximum(var_mag, 0.))
+
+    dmag = np.abs(np.diff(amag, prepend=amag[0])) * fps
+    jerk = np.convolve(dmag, kernel, mode='same')
+
+    features = np.column_stack([
+        s_ay,
+        s_az,
+        np.log1p(std_mag),
+        np.log1p(jerk),
+    ])
+    vertical_soft = (s_ay > 0.88) & (s_az < 0.28)
+    return secs, fps, features, vertical_soft
+
+
+def _imu_walking_series(idx):
+    """Per-frame portrait and walking evidence from accelerometer + gyroscope."""
+    folder = clip_path(idx)
+    frames = load_json(folder, 'frames.json')['frames']
+    acc_data = load_json(folder, 'accelerations.json')['accelerations']
+    rot_data = load_json(folder, 'rotations.json')['rotations']
+
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data], dtype=np.float64)
+    rt = np.array([r['time_usec'] for r in rot_data], dtype=np.float64)
+    rv = np.array([[r['x'], r['y'], r['z']] for r in rot_data], dtype=np.float64)
+    if len(ft) < 2 or len(av) == 0 or len(rv) == 0:
+        raise ValueError('sensor data is empty or too short')
+
+    secs = (ft - float(ft[0])) / 1e6
+    fps = float(1e6 / np.median(np.diff(ft)))
+
+    aligned_acc = np.empty((len(ft), 3), dtype=np.float64)
+    aligned_rot = np.empty((len(ft), 3), dtype=np.float64)
+    for i, t in enumerate(ft):
+        ai = min(max(int(np.searchsorted(at, t)), 0), len(av) - 1)
+        ri = min(max(int(np.searchsorted(rt, t)), 0), len(rv) - 1)
+        aligned_acc[i] = av[ai]
+        aligned_rot[i] = rv[ri]
+
+    amag = np.linalg.norm(aligned_acc, axis=1)
+    gyro_mag = np.linalg.norm(aligned_rot, axis=1)
+    ay_n = np.abs(aligned_acc[:, 1]) / np.maximum(amag, 1e-6)
+    az_n = np.abs(aligned_acc[:, 2]) / np.maximum(amag, 1e-6)
+
+    W = min(len(ft), max(1, int(fps * 0.8)))
+    kernel = np.ones(W) / W
+    s_ay = np.convolve(ay_n, kernel, mode='same')
+    s_az = np.convolve(az_n, kernel, mode='same')
+
+    trend = np.convolve(amag, kernel, mode='same')
+    acc_hp = amag - trend
+    acc_energy = np.sqrt(np.maximum(np.convolve(acc_hp * acc_hp, kernel, mode='same'), 0.))
+    gyro_energy = np.convolve(gyro_mag, kernel, mode='same')
+    jerk = np.convolve(np.abs(np.diff(amag, prepend=amag[0])) * fps, kernel, mode='same')
+
+    def robust_z(values):
+        med = float(np.median(values))
+        iqr = float(np.percentile(values, 75) - np.percentile(values, 25))
+        return (values - med) / max(iqr, 1e-3)
+
+    walking_score = (
+        1.20 * robust_z(acc_energy) +
+        0.80 * robust_z(gyro_energy) +
+        0.35 * robust_z(jerk)
+    )
+    portrait = (s_ay > 0.88) & (s_az < 0.30)
+    strict_portrait = (s_ay > 0.95) & (s_az < 0.12)
+    return secs, fps, portrait, strict_portrait, walking_score, acc_energy, gyro_energy
+
+
+def _moving_average(values, frames):
+    frames = min(len(values), max(1, int(frames)))
+    return np.convolve(values, np.ones(frames) / frames, mode='same')
+
+
+def _rolling_std(values, frames):
+    mean = _moving_average(values, frames)
+    return np.sqrt(np.maximum(_moving_average((values - mean) ** 2, frames), 0.))
+
+
+def _step_regularity(amag, fps, win_sec):
+    """Rolling autocorrelation feature for gait-like step cadence."""
+    n = len(amag)
+    half = max(2, int(fps * win_sec / 2))
+    lags = np.arange(max(2, int(fps * 0.28)), max(3, int(fps * 0.85)))
+    regularity = np.zeros(n)
+    cadence = np.zeros(n)
+    power = np.zeros(n)
+    if len(lags) == 0:
+        return regularity, cadence, power
+
+    min_window = int(lags[-1]) + 2
+    for i in range(n):
+        start = max(0, i - half)
+        end = min(n, i + half + 1)
+        window = amag[start:end]
+        if len(window) < min_window:
+            continue
+        centered = window - np.mean(window)
+        denom = float(np.dot(centered, centered))
+        power[i] = math.sqrt(denom / len(centered)) if len(centered) else 0.
+        if denom <= 1e-9:
+            continue
+
+        best_corr = -1.
+        best_lag = 0
+        for lag in lags:
+            if lag >= len(centered):
+                continue
+            corr = float(np.dot(centered[:-lag], centered[lag:]) / (denom + 1e-9))
+            if corr > best_corr:
+                best_corr = corr
+                best_lag = int(lag)
+        regularity[i] = max(best_corr, 0.)
+        cadence[i] = fps / best_lag if best_lag else 0.
+    return regularity, cadence, power
+
+
+def _classifier_feature_series(idx):
+    """Frame features for the supervised walking/non-walking classifier."""
+    key = CLIPS[idx]
+    if key in _classifier_feature_cache:
+        _classifier_feature_cache.move_to_end(key)
+        return _classifier_feature_cache[key]
+
+    folder = clip_path(idx)
+    frames = load_json(folder, 'frames.json')['frames']
+    acc_data = load_json(folder, 'accelerations.json')['accelerations']
+    rot_data = load_json(folder, 'rotations.json')['rotations']
+
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data], dtype=np.float64)
+    rt = np.array([r['time_usec'] for r in rot_data], dtype=np.float64)
+    rv = np.array([[r['x'], r['y'], r['z']] for r in rot_data], dtype=np.float64)
+    if len(ft) < 2 or len(av) == 0 or len(rv) == 0:
+        raise ValueError('sensor data is empty or too short')
+
+    secs = (ft - float(ft[0])) / 1e6
+    fps = float(1e6 / np.median(np.diff(ft)))
+
+    aligned_acc = np.empty((len(ft), 3), dtype=np.float64)
+    aligned_rot = np.empty((len(ft), 3), dtype=np.float64)
+    for i, t in enumerate(ft):
+        ai = min(max(int(np.searchsorted(at, t)), 0), len(av) - 1)
+        ri = min(max(int(np.searchsorted(rt, t)), 0), len(rv) - 1)
+        aligned_acc[i] = av[ai]
+        aligned_rot[i] = rv[ri]
+
+    amag = np.linalg.norm(aligned_acc, axis=1)
+    gyro_mag = np.linalg.norm(aligned_rot, axis=1)
+    ax_n = np.abs(aligned_acc[:, 0]) / np.maximum(amag, 1e-6)
+    ay_n = np.abs(aligned_acc[:, 1]) / np.maximum(amag, 1e-6)
+    az_n = np.abs(aligned_acc[:, 2]) / np.maximum(amag, 1e-6)
+
+    features = []
+    for sec in (0.35, 0.60, 0.90, 1.40):
+        W = fps * sec
+        s_ax = _moving_average(ax_n, W)
+        s_ay = _moving_average(ay_n, W)
+        s_az = _moving_average(az_n, W)
+        trend = _moving_average(amag, W)
+        acc_hp = amag - trend
+        acc_energy = np.sqrt(np.maximum(_moving_average(acc_hp * acc_hp, W), 0.))
+        gyro_energy = _moving_average(gyro_mag, W)
+        gyro_std = _rolling_std(gyro_mag, W)
+        jerk = _moving_average(np.abs(np.diff(amag, prepend=amag[0])) * fps, W)
+
+        raw_energy = [
+            np.log1p(acc_energy),
+            np.log1p(gyro_energy),
+            np.log1p(gyro_std),
+            np.log1p(jerk),
+        ]
+        features.extend([s_ay, s_az, s_ax])
+        features.extend(raw_energy)
+
+        for values in raw_energy:
+            med = float(np.median(values))
+            iqr = float(np.percentile(values, 75) - np.percentile(values, 25))
+            features.append((values - med) / max(iqr, 1e-3))
+
+    for win_sec in (1.5, 2.0, 2.6):
+        regularity, cadence, power = _step_regularity(amag, fps, win_sec)
+        cadence_match = np.exp(-((cadence - 1.8) / 0.45) ** 2)
+        features.extend([
+            regularity,
+            cadence,
+            cadence_match,
+            np.log1p(power),
+            regularity * cadence_match,
+        ])
+
+    X = np.column_stack(features)
+    portrait = (
+        (_moving_average(ay_n, fps * 0.8) > 0.88) &
+        (_moving_average(az_n, fps * 0.8) < 0.30)
+    )
+    result = (secs, fps, X, portrait)
+    _classifier_feature_cache[key] = result
+    if len(_classifier_feature_cache) > 32:
+        _classifier_feature_cache.popitem(last=False)
+    return result
+
+
+def _benchmark_profile():
+    """Build a positive/negative sensor profile from exported crops."""
+    positives = []
+    negatives = []
+    durations = []
+
+    for entry in load_history():
+        idx = entry.get('source_idx')
+        start = entry.get('start')
+        end = entry.get('end')
+        if idx is None or start is None or end is None:
+            continue
+        if idx < 0 or idx >= len(CLIPS) or end <= start:
+            continue
+        try:
+            secs, _fps, features, _vertical = _walking_feature_series(int(idx))
+        except Exception:
+            continue
+
+        start = float(start)
+        end = float(end)
+        gt = (secs >= start) & (secs <= end)
+        ctx = (secs >= max(0., start - 5.0)) & (secs <= end + 5.0)
+        neg = ctx & ~gt
+        if gt.any() and neg.any():
+            positives.append(features[gt])
+            negatives.append(features[neg])
+            durations.append(end - start)
+
+    if not positives or not negatives:
+        return None
+
+    pos = np.vstack(positives)
+    neg = np.vstack(negatives)
+
+    def robust_stats(values):
+        q25 = np.percentile(values, 25, axis=0)
+        q75 = np.percentile(values, 75, axis=0)
+        return np.median(values, axis=0), np.maximum(q75 - q25, 0.05)
+
+    pos_mid, pos_scale = robust_stats(pos)
+    neg_mid, neg_scale = robust_stats(neg)
+    dur = np.array(durations, dtype=np.float64)
+    return {
+        'pos_mid': pos_mid,
+        'pos_scale': pos_scale,
+        'neg_mid': neg_mid,
+        'neg_scale': neg_scale,
+        'threshold': float((
+            np.percentile(_benchmark_scores(pos, pos_mid, pos_scale, neg_mid, neg_scale), 25) +
+            np.percentile(_benchmark_scores(neg, pos_mid, pos_scale, neg_mid, neg_scale), 75)
+        ) / 2),
+        'min_duration': float(max(1.5, np.percentile(dur, 10) * 0.75)),
+        'max_duration': float(max(np.percentile(dur, 90) * 1.25, dur.max())),
+    }
+
+
+def _benchmark_scores(features, pos_mid, pos_scale, neg_mid, neg_scale):
+    pos_dist = np.sum(((features - pos_mid) / pos_scale) ** 2, axis=1)
+    neg_dist = np.sum(((features - neg_mid) / neg_scale) ** 2, axis=1)
+    return neg_dist - pos_dist
+
+
+def _resample_features(features, n=128):
+    if len(features) == 0:
+        return None
+    old_x = np.linspace(0., 1., len(features))
+    new_x = np.linspace(0., 1., n)
+    return np.column_stack([
+        np.interp(new_x, old_x, features[:, j])
+        for j in range(features.shape[1])
+    ])
+
+
+def _normalize_template(features):
+    normalized = features.copy()
+    # Preserve absolute portrait orientation columns; normalize motion intensity
+    # columns so different walking strengths can still match the same pattern.
+    for col in (2, 3):
+        mid = float(np.median(normalized[:, col]))
+        scale = float(np.percentile(normalized[:, col], 75) -
+                      np.percentile(normalized[:, col], 25))
+        scale = max(scale, 0.05)
+        normalized[:, col] = (normalized[:, col] - mid) / scale
+    return normalized
+
+
+def _walking_templates():
+    mtime = os.path.getmtime(HISTORY_FILE) if os.path.exists(HISTORY_FILE) else None
+    if (_walking_template_cache['mtime'] == mtime and
+            _walking_template_cache['templates'] is not None):
+        return (_walking_template_cache['templates'],
+                _walking_template_cache['durations'])
+
+    templates = []
+    durations = []
+    for entry in load_history():
+        idx = entry.get('source_idx')
+        start = entry.get('start')
+        end = entry.get('end')
+        if idx is None or start is None or end is None:
+            continue
+        if idx < 0 or idx >= len(CLIPS) or end <= start:
+            continue
+        try:
+            secs, _fps, features, _vertical = _walking_feature_series(int(idx))
+        except Exception:
+            continue
+        mask = (secs >= float(start)) & (secs <= float(end))
+        if not mask.any():
+            continue
+        resampled = _resample_features(features[mask])
+        if resampled is None:
+            continue
+        templates.append(_normalize_template(resampled))
+        durations.append(float(end) - float(start))
+    _walking_template_cache.update({
+        'mtime': mtime,
+        'templates': templates,
+        'durations': durations,
+    })
+    return templates, durations
+
+
+def _first_sustained(mask, secs, fps, min_sec=1.5):
+    """First run of ≥ min_sec frames where mask is True.
+    Returns (start_sec, end_sec) where end is the last True frame anywhere
+    after that run, or (None, None) if no qualifying run exists."""
+    min_frames = int(fps * min_sec)
+    count = 0
+    start_i = None
+    for i, v in enumerate(mask):
+        if v:
+            if count == 0:
+                start_i = i
+            count += 1
+            if count >= min_frames:
+                end_i = int(len(mask) - 1 - np.argmax(mask[::-1]))
+                return round(float(secs[start_i]), 2), round(float(secs[end_i]), 2)
+        else:
+            count = 0
+            start_i = None
+    return None, None
+
+
+def _best_sustained(mask, secs, fps, min_sec=1.5, max_gap_sec=0.6):
+    """Longest sustained True run, allowing short detector dropouts."""
+    max_gap = max(0, int(fps * max_gap_sec))
+    min_frames = int(fps * min_sec)
+    best = None
+    start_i = None
+    last_true_i = None
+    gap = 0
+
+    def finish():
+        nonlocal best, start_i, last_true_i
+        if start_i is None or last_true_i is None:
+            return
+        frames = last_true_i - start_i + 1
+        if frames >= min_frames and (best is None or frames > best[2]):
+            best = (start_i, last_true_i, frames)
+
+    for i, v in enumerate(mask):
+        if v:
+            if start_i is None:
+                start_i = i
+            last_true_i = i
+            gap = 0
+        elif start_i is not None:
+            gap += 1
+            if gap > max_gap:
+                finish()
+                start_i = None
+                last_true_i = None
+                gap = 0
+    finish()
+
+    if best is None:
+        return None, None
+    return round(float(secs[best[0]]), 2), round(float(secs[best[1]]), 2)
+
+
+def _runs(mask, fps, min_sec=1.0, max_gap_sec=0.7):
+    min_frames = max(1, int(fps * min_sec))
+    max_gap = max(0, int(fps * max_gap_sec))
+    result = []
+    start_i = None
+    last_true_i = None
+    gap = 0
+
+    for i, value in enumerate(mask):
+        if value:
+            if start_i is None:
+                start_i = i
+            last_true_i = i
+            gap = 0
+        elif start_i is not None:
+            gap += 1
+            if gap > max_gap:
+                if last_true_i - start_i + 1 >= min_frames:
+                    result.append((start_i, last_true_i))
+                start_i = None
+                last_true_i = None
+                gap = 0
+
+    if start_i is not None and last_true_i - start_i + 1 >= min_frames:
+        result.append((start_i, last_true_i))
+    return result
+
+
+def _walking_classifier_model():
+    """Train/cache a frame classifier from exported walking windows."""
+    mtime = os.path.getmtime(HISTORY_FILE) if os.path.exists(HISTORY_FILE) else None
+    if (_walking_classifier_cache['mtime'] == mtime and
+            _walking_classifier_cache['model'] is not None):
+        return _walking_classifier_cache['model']
+
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+    except Exception:
+        return None
+
+    X_parts = []
+    y_parts = []
+    for entry in load_history():
+        idx = entry.get('source_idx')
+        start = entry.get('start')
+        end = entry.get('end')
+        if idx is None or start is None or end is None:
+            continue
+        if idx < 0 or idx >= len(CLIPS) or end <= start:
+            continue
+        try:
+            secs, _fps, features, _portrait = _classifier_feature_series(int(idx))
+        except Exception:
+            continue
+        labels = ((secs >= float(start)) & (secs <= float(end))).astype(int)
+        if labels.any() and (~labels.astype(bool)).any():
+            X_parts.append(features)
+            y_parts.append(labels)
+
+    if not X_parts:
+        return None
+
+    model = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=9,
+        min_samples_leaf=6,
+        class_weight='balanced_subsample',
+        random_state=7,
+        n_jobs=1,
+    )
+    model.fit(np.vstack(X_parts), np.concatenate(y_parts))
+    _walking_classifier_cache.update({'mtime': mtime, 'model': model})
+    return model
+
+
+def _classifier_walking_window(idx):
+    """
+    Classify each frame as walking/non-walking, then return one smoothed segment.
+
+    Features combine orientation, accelerometer/gyroscope energy, and rolling
+    step-cadence autocorrelation. The classifier is trained from the exported
+    windows in history.json and refreshed after new exports.
+    """
+    model = _walking_classifier_model()
+    if model is None:
+        return _imu_walking_window(idx)
+
+    secs, fps, features, portrait = _classifier_feature_series(idx)
+    probabilities = model.predict_proba(features)[:, 1]
+    probabilities = _moving_average(probabilities, fps * 0.6)
+
+    active = portrait & (probabilities > 0.50)
+    runs = _runs(active, fps, min_sec=0.9, max_gap_sec=0.65)
+    if not runs:
+        return None, None
+
+    merged = []
+    for start_i, end_i in runs:
+        if merged and secs[start_i] - secs[merged[-1][1]] <= 1.0:
+            merged[-1] = (merged[-1][0], end_i)
+        else:
+            merged.append((start_i, end_i))
+
+    best = None
+    for start_i, end_i in merged:
+        duration = float(secs[end_i] - secs[start_i])
+        if duration < 3.0:
+            continue
+        quality = (
+            float(np.mean(probabilities[start_i:end_i + 1])) +
+            0.08 * math.log(max(duration, 0.1)) -
+            0.04 * abs(duration - 6.25)
+        )
+        if duration > 12.1:
+            quality -= 1.0
+        if best is None or quality > best[0]:
+            best = (quality, start_i, end_i)
+
+    if best is None:
+        return None, None
+
+    start_i, end_i = best[1], best[2]
+    edge = portrait & (probabilities > 0.45)
+    while start_i <= end_i and not edge[start_i]:
+        start_i += 1
+    while end_i >= start_i and not edge[end_i]:
+        end_i -= 1
+    if end_i <= start_i:
+        return None, None
+
+    max_duration = 12.1
+    if secs[end_i] - secs[start_i] > max_duration:
+        window = max(1, int(max_duration * fps))
+        best_sub = None
+        for sub_start in range(start_i, max(start_i + 1, end_i - window + 2)):
+            sub_end = min(end_i, sub_start + window - 1)
+            quality = float(np.mean(probabilities[sub_start:sub_end + 1]))
+            if best_sub is None or quality > best_sub[0]:
+                best_sub = (quality, sub_start, sub_end)
+        start_i, end_i = best_sub[1], best_sub[2]
+
+    if secs[end_i] - secs[start_i] < 3.0:
+        return None, None
+
+    return round(float(secs[start_i]), 2), round(float(secs[end_i]), 2)
+
+
+def _imu_walking_window(idx):
+    """
+    Detect the single walking bout using IMU activity.
+
+    Calibrated against the current five exported windows:
+    - portrait gate removes handling/setup outside usable footage;
+    - acceleration high-pass energy captures steps;
+    - gyroscope energy catches body/phone sway during walking;
+    - loose expansion recovers the start/end around the active core.
+    """
+    secs, fps, portrait, strict_portrait, score, acc_energy, gyro_energy = _imu_walking_series(idx)
+
+    # If walking starts when the phone is raised into portrait, the step-energy
+    # core can lag behind the true visual start. The ground truth includes this
+    # portrait transition, so detect that case before trimming by activity.
+    portrait_runs = _runs(strict_portrait, fps, min_sec=2.0, max_gap_sec=0.5)
+    transition_candidates = []
+    for start_i, end_i in portrait_runs:
+        duration = float(secs[end_i] - secs[start_i])
+        pre_start = max(0, start_i - int(fps * 2.0))
+        pre_portrait = float(strict_portrait[pre_start:start_i].mean()) if start_i > pre_start else 0.
+        run_acc = float(np.median(acc_energy[start_i:end_i + 1]))
+        run_gyro = float(np.median(gyro_energy[start_i:end_i + 1]))
+        if 10.0 <= duration <= 12.5 and pre_portrait < 0.40 and run_acc > 0.70 and run_gyro > 0.12:
+            quality = duration + run_acc + run_gyro
+            transition_candidates.append((quality, start_i, end_i))
+    if transition_candidates:
+        _quality, start_i, end_i = max(transition_candidates, key=lambda item: item[0])
+        return round(float(secs[start_i]), 2), round(float(secs[end_i]), 2)
+
+    active = (
+        portrait &
+        (score > -0.50) &
+        (acc_energy > 0.15) &
+        (gyro_energy > 0.03)
+    )
+    runs = _runs(active, fps, min_sec=1.0, max_gap_sec=0.8)
+    if not runs:
+        return None, None
+
+    # Merge nearby active pieces inside the same walking bout.
+    merged = []
+    for start_i, end_i in runs:
+        if merged and secs[start_i] - secs[merged[-1][1]] <= 1.5:
+            merged[-1] = (merged[-1][0], end_i)
+        else:
+            merged.append((start_i, end_i))
+
+    target_duration = 6.25  # median-ish duration from the 5 ground-truth exports
+    best = None
+    for start_i, end_i in merged:
+        duration = float(secs[end_i] - secs[start_i])
+        quality = (
+            float(np.mean(score[start_i:end_i + 1])) +
+            0.25 * math.log(max(duration, 0.1)) -
+            0.06 * abs(duration - target_duration)
+        )
+        if best is None or quality > best[0]:
+            best = (quality, start_i, end_i)
+
+    start_i, end_i = best[1], best[2]
+    loose = portrait & (score > -1.20) & (acc_energy > 0.12) & (gyro_energy > 0.02)
+    while start_i > 0 and loose[start_i - 1]:
+        start_i -= 1
+    while end_i + 1 < len(secs) and loose[end_i + 1]:
+        end_i += 1
+
+    max_duration = 12.1  # 1.15x the longest current ground-truth export
+    if secs[end_i] - secs[start_i] > max_duration:
+        window = max(1, int(max_duration * fps))
+        best_sub = None
+        for sub_start in range(start_i, max(start_i + 1, end_i - window + 2)):
+            sub_end = min(end_i, sub_start + window - 1)
+            quality = float(np.mean(score[sub_start:sub_end + 1]))
+            if best_sub is None or quality > best_sub[0]:
+                best_sub = (quality, sub_start, sub_end)
+        start_i, end_i = best_sub[1], best_sub[2]
+
+    min_duration = 3.0  # rejects short bursts while keeping the shortest benchmark core
+    if secs[end_i] - secs[start_i] < min_duration:
+        return None, None
+
+    return round(float(secs[start_i]), 2), round(float(secs[end_i]), 2)
+
+
+def _benchmark_sustained(idx):
+    profile = _benchmark_profile()
+    if not profile:
+        secs, fps, vertical, walking = _orientation_walking_masks(idx)
+        return _best_sustained(vertical & walking, secs, fps)
+
+    secs, fps, features, vertical = _walking_feature_series(idx)
+    scores = _benchmark_scores(
+        features,
+        profile['pos_mid'],
+        profile['pos_scale'],
+        profile['neg_mid'],
+        profile['neg_scale'],
+    )
+    mask = vertical & (scores > profile['threshold'])
+
+    max_gap = max(0, int(fps * 0.8))
+    min_frames = max(1, int(fps * profile['min_duration']))
+    max_frames = max(min_frames, int(fps * profile['max_duration']))
+    runs = []
+    start_i = None
+    last_true_i = None
+    gap = 0
+
+    def finish():
+        nonlocal start_i, last_true_i
+        if start_i is not None and last_true_i is not None:
+            frames = last_true_i - start_i + 1
+            if frames >= min_frames:
+                runs.append((start_i, last_true_i))
+
+    for i, v in enumerate(mask):
+        if v:
+            if start_i is None:
+                start_i = i
+            last_true_i = i
+            gap = 0
+        elif start_i is not None:
+            gap += 1
+            if gap > max_gap:
+                finish()
+                start_i = None
+                last_true_i = None
+                gap = 0
+    finish()
+
+    if not runs:
+        return None, None
+
+    best = None
+    for start_i, end_i in runs:
+        if end_i - start_i + 1 > max_frames:
+            window = max_frames
+            for s in range(start_i, end_i - window + 2):
+                e = s + window - 1
+                quality = float(np.mean(scores[s:e+1]))
+                if best is None or quality > best[0]:
+                    best = (quality, s, e)
+        else:
+            quality = float(np.mean(scores[start_i:end_i+1]))
+            duration_bonus = math.log(max(end_i - start_i + 1, 1))
+            quality += duration_bonus * 0.15
+            if best is None or quality > best[0]:
+                best = (quality, start_i, end_i)
+
+    return round(float(secs[best[1]]), 2), round(float(secs[best[2]]), 2)
+
+
+def _template_sustained(idx):
+    """Find the single window most similar to exported walking windows."""
+    templates, durations = _walking_templates()
+    if not templates:
+        return _benchmark_sustained(idx)
+
+    secs, fps, features, vertical = _walking_feature_series(idx)
+    if len(secs) < 2:
+        return None, None
+
+    min_duration = min(durations) * 0.8
+    max_duration = max(durations) * 1.15
+    candidate_durations = np.linspace(min_duration, max_duration, 18)
+    step = max(1, int(fps * 0.25))
+    best = None
+
+    for duration in candidate_durations:
+        win = max(4, int(duration * fps))
+        if win >= len(secs):
+            continue
+        for start_i in range(0, len(secs) - win, step):
+            end_i = start_i + win
+            portrait_share = float(vertical[start_i:end_i].mean())
+            if portrait_share < 0.55:
+                continue
+
+            candidate = _resample_features(features[start_i:end_i])
+            if candidate is None:
+                continue
+            candidate = _normalize_template(candidate)
+            distance = min(
+                float(np.mean((candidate - template) ** 2))
+                for template in templates
+            )
+            distance += (1.0 - portrait_share) * 0.5
+            if best is None or distance < best[0]:
+                best = (distance, start_i, end_i)
+
+    if best is None or best[0] > 0.08:
+        return None, None
+
+    end_i = min(best[2], len(secs) - 1)
+    return round(float(secs[best[1]]), 2), round(float(secs[end_i]), 2)
+
+
+def suggest_crop(idx, mode='vertical'):
+    """
+    Suggest a crop window.
+      mode='vertical' → first sustained portrait period (default, calibrated).
+      mode='walking'  → first sustained portrait *and* walking period.
+    Always reports has_vertical so the UI can warn when a clip never goes
+    vertical at all.
+    """
+    try:
+        secs, fps, vertical, walking = _orientation_walking_masks(idx)
+    except Exception as e:
+        return {'found': False, 'mode': mode, 'has_vertical': False,
+                'message': f'Dados do clipe invÃ¡lidos: {e}'}
+
+    # Horizontal footage (SenseCV roots): orientation is irrelevant, so ignore
+    # the vertical mask entirely and just segment the first sustained walking
+    # period (reusing a previously exported window when one exists).
+    if CLIPS[idx] in WALKING_ONLY:
+        learned = learned_walking_window(idx)
+        if learned:
+            start, end = learned
+            return {'found': True, 'mode': 'walking', 'start': start, 'end': end,
+                    'has_vertical': True, 'learned': True}
+        start, end = _first_sustained(walking, secs, fps)
+        if start is not None:
+            return {'found': True, 'mode': 'walking', 'start': start, 'end': end,
+                    'has_vertical': True}
+        return {'found': False, 'mode': 'walking', 'has_vertical': True,
+                'message': 'Nenhum momento de caminhada sustentado encontrado'}
+
+    has_vertical = bool(vertical.any())
+
+    if mode == 'walking':
+        learned = learned_walking_window(idx)
+        if learned:
+            start, end = learned
+            return {'found': True, 'mode': mode, 'start': start, 'end': end,
+                    'has_vertical': has_vertical, 'learned': True}
+        if not has_vertical:
+            start, end = None, None
+        else:
+            start, end = _classifier_walking_window(idx)
+    else:
+        mask = vertical
+        start, end = _first_sustained(mask, secs, fps)
+    if start is not None:
+        return {'found': True, 'mode': mode, 'start': start, 'end': end,
+                'has_vertical': has_vertical}
+
+    if not has_vertical:
+        msg = 'Nenhum período em posição vertical encontrado'
+    elif mode == 'walking':
+        msg = 'Posição vertical encontrada, mas sem momento de caminhada sustentado'
+    else:
+        msg = 'Nenhum período em posição vertical encontrado'
+    return {'found': False, 'mode': mode, 'has_vertical': has_vertical, 'message': msg}
+
+# ─── Lateral-deviation detection ─────────────────────────────────────────────
+
+def _lateral_acceleration_series(idx):
+    """Per-frame horizontal-acceleration magnitude (gravity removed).
+
+    Gravity is the 1-second rolling mean of the raw accel vector; linear accel
+    is what remains. The horizontal component is everything perpendicular to
+    the local gravity direction, so the metric is orientation-independent
+    (works for both vertical supermercado and horizontal SenseCV clips).
+    Smoothing is intentionally light (~0.1 s) so the sharp impulse of a real
+    sidestep is preserved — the lateral detector scores by peak intensity, so
+    over-smoothing flattens the very feature it tries to find.
+    """
+    folder = clip_path(idx)
+    frames   = load_json(folder, 'frames.json')['frames']
+    acc_data = load_json(folder, 'accelerations.json')['accelerations']
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data])
+    if len(ft) < 2 or len(av) == 0:
+        raise ValueError('sensor data is empty or too short')
+    t0 = float(ft[0]); secs = (ft - t0) / 1e6
+    fps = float(1e6 / np.median(np.diff(ft)))
+
+    a_at_f = np.array(interp_at_times(at, av, ft.tolist()))  # (N,3)
+    W = min(len(ft), max(1, int(fps * 1.0)))
+    kernel = np.ones(W) / W
+    g_vec = np.column_stack([np.convolve(a_at_f[:, k], kernel, mode='same')
+                             for k in range(3)])
+    g_norm = np.linalg.norm(g_vec, axis=1, keepdims=True)
+    g_norm = np.where(g_norm < 1e-6, 1e-6, g_norm)
+    g_hat  = g_vec / g_norm
+
+    linear   = a_at_f - g_vec
+    along_g  = np.sum(linear * g_hat, axis=1, keepdims=True) * g_hat
+    horiz    = linear - along_g
+    h_mag    = np.linalg.norm(horiz, axis=1)
+
+    Ws = min(len(ft), max(1, int(fps * 0.1)))
+    h_smooth = np.convolve(h_mag, np.ones(Ws) / Ws, mode='same')
+    return secs, fps, h_smooth
+
+
+def suggest_lateral_deviation(idx, window_sec=1.0, dir_window_sec=2.0):
+    """Window where the videomaker's lateral velocity is highest — sidestep.
+
+    Calibrated against the operator's manually-cut deviation exports in
+    `history.json` (entries 6-10, SenseCV clips 28-31 and 46). Of the
+    features tried in `_debug_lateral.py`, **mean |lateral velocity| over a
+    sliding 1 s window** matched the GT windows best (mean abs offset 0.61 s,
+    beating yaw rate at 0.68 s and lateral-accel magnitude entirely).
+
+    Algorithm:
+      1. Gravity = 1 s rolling mean of accel → orientation-independent
+         horizontal plane.
+      2. Horizontal acceleration = `linear − (linear · g_hat) g_hat`,
+         projected onto an orthonormal 2-D basis (e1, e2) in that plane.
+      3. Integrate to a 2-D velocity, drift-corrected by subtracting the
+         clip-mean (removes IMU bias accumulated by `cumsum`).
+      4. Local walking direction = `dir_window_sec` rolling mean of that
+         velocity. "Lateral" velocity = the component perpendicular to it.
+      5. Slide a `window_sec`-wide window and pick the position with the
+         highest mean `|lateral velocity|`.
+
+    Always returns a window — per the user's "must happen in every lateral
+    deviation clip" requirement.
+    """
+    folder = clip_path(idx)
+    try:
+        frames = load_json(folder, 'frames.json')['frames']
+        acc    = load_json(folder, 'accelerations.json')['accelerations']
+    except Exception as e:
+        return {'found': False, 'mode': 'lateral', 'has_vertical': True,
+                'message': f'Dados do clipe invÃ¡lidos: {e}'}
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    if len(ft) < 2 or len(acc) == 0:
+        return {'found': False, 'mode': 'lateral', 'has_vertical': True,
+                'message': 'Dados do clipe incompletos'}
+    at = np.array([a['time_usec'] for a in acc], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc])
+    secs = (ft - ft[0]) / 1e6
+    fps  = float(1e6 / np.median(np.diff(ft)))
+
+    a_at_f = np.array(interp_at_times(at, av, ft.tolist()))
+
+    # Gravity & horizontal acceleration
+    Wg = min(len(ft), max(1, int(fps * 1.0)))
+    kg = np.ones(Wg) / Wg
+    g_vec = np.column_stack([np.convolve(a_at_f[:, k], kg, mode='same')
+                             for k in range(3)])
+    g_hat = g_vec / np.maximum(np.linalg.norm(g_vec, axis=1, keepdims=True), 1e-6)
+    horiz3 = (a_at_f - g_vec) - np.sum((a_at_f - g_vec) * g_hat,
+                                       axis=1, keepdims=True) * g_hat
+
+    # 2-D basis in horizontal plane
+    e1 = np.cross(g_hat, np.array([1., 0., 0.]))
+    bad = np.linalg.norm(e1, axis=1) < 1e-3
+    if bad.any():
+        e1[bad] = np.cross(g_hat[bad], np.array([0., 1., 0.]))
+    e1 /= np.maximum(np.linalg.norm(e1, axis=1, keepdims=True), 1e-6)
+    e2 = np.cross(g_hat, e1)
+    e2 /= np.maximum(np.linalg.norm(e2, axis=1, keepdims=True), 1e-6)
+    horiz2 = np.column_stack([np.sum(horiz3 * e1, axis=1),
+                              np.sum(horiz3 * e2, axis=1)])
+
+    # Integrate to velocity, remove drift bias
+    dt = np.diff(np.concatenate([[secs[0]], secs]))
+    vel2 = np.cumsum(horiz2 * dt[:, None], axis=0)
+    vel2 -= vel2.mean(axis=0, keepdims=True)
+
+    # Local walking direction → lateral component
+    Wd = min(len(ft), max(1, int(fps * dir_window_sec)))
+    kd = np.ones(Wd) / Wd
+    mean_v = np.column_stack([np.convolve(vel2[:, 0], kd, mode='same'),
+                              np.convolve(vel2[:, 1], kd, mode='same')])
+    mn  = np.maximum(np.linalg.norm(mean_v, axis=1, keepdims=True), 1e-6)
+    fwd = mean_v / mn
+    lat = np.column_stack([-fwd[:, 1], fwd[:, 0]])
+    lat_vel = np.abs(np.sum(vel2 * lat, axis=1))
+
+    w = max(1, int(round(fps * window_sec)))
+    if len(lat_vel) <= w:
+        return {'found': True, 'mode': 'lateral', 'has_vertical': True,
+                'start': round(float(secs[0]), 3),
+                'end':   round(float(secs[-1]), 3)}
+    sliding_mean = np.convolve(lat_vel, np.ones(w), mode='valid') / w
+    i = int(np.argmax(sliding_mean))
+    return {'found': True, 'mode': 'lateral', 'has_vertical': True,
+            'start': round(float(secs[i]), 3),
+            'end':   round(float(secs[i + w - 1]), 3)}
+
+
+# ─── Batch export ────────────────────────────────────────────────────────────
+
+def _safe_clip_name(display):
+    return display.replace('/', '_').replace('\\', '_')
+
+
+def _ffmpeg_cut(src_video, start, end, out_video):
+    import imageio_ffmpeg
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    cmd = [
+        ffmpeg, '-y',
+        '-ss', f'{start:.3f}',
+        '-noautorotate',
+        '-i', src_video,
+        '-t', f'{end-start:.3f}',
+        '-map', '0:v:0',
+        '-an',
+        '-map_metadata', '0',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        out_video,
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr[-500:])
+
+
+def export_set(indices, out_dir, mode='walking', verbose=False):
+    """Batch-export an auto-suggested cut per clip into `out_dir`.
+
+    mode='walking' uses suggest_crop(idx, 'walking'); mode='lateral' uses
+    suggest_lateral_deviation(idx). Writes a sources.csv ledger and returns a
+    summary dict. Idempotent: per-clip subfolders are wiped before re-cutting.
+    """
+    import csv
+    os.makedirs(out_dir, exist_ok=True)
+    csv_path = os.path.join(out_dir, 'sources.csv')
+    rows = []
+    n_ok = n_skip = n_fail = 0
+
+    for idx in indices:
+        display    = CLIPS[idx]
+        src_folder = CLIP_PATHS[display]
+        if '/' in display:
+            root_label, sub = display.split('/', 1)
+        else:
+            root_label, sub = 'supermercado', display
+        name = _safe_clip_name(display)
+        out_folder = os.path.join(out_dir, name)
+        out_video  = os.path.join(out_folder, name + '.mp4')
+
+        row = {'output_folder': name, 'source_display': display,
+               'source_root': root_label, 'source_subfolder': sub,
+               'source_path': src_folder, 'mode': mode,
+               'start': '', 'end': '', 'duration': '', 'status': ''}
+
+        if mode == 'lateral':
+            sug = suggest_lateral_deviation(idx)
+        else:
+            sug = suggest_crop(idx, 'walking')
+
+        if not sug.get('found'):
+            row['status'] = 'no_segment: ' + str(sug.get('message', ''))
+            rows.append(row); n_skip += 1
+            if verbose: print(f'  [skip] {display}: {sug.get("message","")}')
+            continue
+
+        start, end = float(sug['start']), float(sug['end'])
+        row.update(start=f'{start:.3f}', end=f'{end:.3f}',
+                   duration=f'{end-start:.3f}')
+
+        if os.path.isdir(out_folder):
+            import shutil; shutil.rmtree(out_folder, ignore_errors=True)
+        os.makedirs(out_folder)
+
+        try:
+            _ffmpeg_cut(clip_video_path(idx), start, end, out_video)
+        except Exception as e:
+            import shutil; shutil.rmtree(out_folder, ignore_errors=True)
+            row['status'] = f'ffmpeg_error: {e}'
+            rows.append(row); n_fail += 1
+            if verbose: print(f'  [fail] {display}: {e}')
+            continue
+
+        try:
+            save_sensor_data(idx, start, end, out_folder)
+        except Exception as e:
+            row['status'] = f'ok_no_sensor: {e}'
+        else:
+            row['status'] = 'ok'
+
+        rows.append(row); n_ok += 1
+        if verbose: print(f'  [ok]   {display}: {start:.2f}-{end:.2f}s')
+
+    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=[
+            'output_folder', 'source_display', 'source_root',
+            'source_subfolder', 'source_path', 'mode',
+            'start', 'end', 'duration', 'status'])
+        w.writeheader(); w.writerows(rows)
+
+    return {'ok': n_ok, 'skipped': n_skip, 'failed': n_fail,
+            'total': len(indices), 'out_dir': out_dir, 'csv_path': csv_path}
+
+
+def _preset_filter(preset):
+    if preset == 'sensecv':
+        return lambda name: name in WALKING_ONLY and not name.startswith('exports/')
+    if preset == 'supermarket':
+        return lambda name: name not in WALKING_ONLY and not name.startswith('exports/')
+    return None
+
+
+def _preset_out_dir(preset, mode):
+    base = {'sensecv': 'SenseCV', 'supermarket': 'Supermercado'}[preset]
+    suffix = '' if mode == 'walking' else ' (lateral)'
+    return os.path.join(CLIPS_DIR, f'{base} dataset{suffix}')
+
+
+PRESETS = ('sensecv', 'supermarket')
+
+
+# ─── Routes ──────────────────────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    refresh_clips()
+    h = load_history()
+    return render_template('index.html',
+                           total=len(CLIPS),
+                           clips=json.dumps(CLIPS),
+                           clip_groups=json.dumps(clip_groups()),
+                           history=json.dumps(h),
+                           export_folders=json.dumps(list_export_folders()),
+                           next_number=get_next_number())
+
+@app.route('/video/<int:idx>')
+def video(idx):
+    if idx<0 or idx>=len(CLIPS): return 'Not found',404
+    path = clip_video_path(idx); size=os.path.getsize(path)
+    rng  = request.headers.get('Range')
+    if not rng:
+        with open(path,'rb') as f: data=f.read()
+        return Response(data,mimetype='video/mp4',
+                        headers={'Accept-Ranges':'bytes','Content-Length':str(size)})
+    m=re.search(r'(\d+)-(\d*)',rng); b1=int(m.group(1)); b2=int(m.group(2)) if m.group(2) else size-1
+    length=b2-b1+1
+    with open(path,'rb') as f: f.seek(b1); data=f.read(length)
+    return Response(data,206,mimetype='video/mp4',headers={
+        'Content-Range':f'bytes {b1}-{b2}/{size}','Accept-Ranges':'bytes','Content-Length':str(length)})
+
+@app.route('/api/data/<int:idx>')
+def api_data(idx):
+    if idx<0 or idx>=len(CLIPS): return jsonify({'error':'out of range'}),404
+    return jsonify(get_clip_data(idx))
+
+@app.route('/api/clips')
+def api_clips():
+    refresh_clips()
+    return jsonify({'clips':CLIPS,'groups':clip_groups(),'total':len(CLIPS)})
+
+@app.route('/api/upload-zip', methods=['POST'])
+def api_upload_zip():
+    upload = request.files.get('zip') or request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'status':'error','message':'Arquivo .zip ausente'}),400
+    if not upload.filename.lower().endswith('.zip'):
+        return jsonify({'status':'error','message':'Envie um arquivo .zip'}),400
+
+    target = _unique_dir(UPLOADS_DIR, upload.filename)
+    try:
+        with zipfile.ZipFile(upload.stream) as zf:
+            bad = zf.testzip()
+            if bad:
+                raise ValueError(f'arquivo corrompido dentro do zip: {bad}')
+            _safe_extract_zip(zf, target)
+        clip_dirs = _discover_clip_dirs(target, recursive=True)
+        if not clip_dirs:
+            shutil.rmtree(target, ignore_errors=True)
+            return jsonify({
+                'status':'error',
+                'message':'O zip nao contem subpastas SenseCV validas com video.mp4 e frames.json'
+            }),400
+    except zipfile.BadZipFile:
+        shutil.rmtree(target, ignore_errors=True)
+        return jsonify({'status':'error','message':'Zip invalido ou corrompido'}),400
+    except Exception as e:
+        shutil.rmtree(target, ignore_errors=True)
+        return jsonify({'status':'error','message':str(e)}),500
+
+    refresh_clips()
+    rel = os.path.relpath(target, UPLOADS_DIR).replace(os.sep, '/')
+    added = [
+        name for name, path in CLIP_PATHS.items()
+        if os.path.commonpath([os.path.abspath(target), os.path.abspath(path)]) == os.path.abspath(target)
+    ]
+    return jsonify({
+        'status':'ok',
+        'dataset': rel,
+        'clips_added': len(added),
+        'clips': CLIPS,
+        'groups': clip_groups(),
+        'total': len(CLIPS),
+    })
+
+@app.route('/api/history')
+def api_history():
+    return jsonify(load_history())
+
+@app.route('/api/export-state')
+def api_export_state():
+    refresh_clips()
+    return jsonify({
+        'clips': CLIPS,
+        'groups': clip_groups(),
+        'total': len(CLIPS),
+        'history': load_history(),
+        'export_folders': list_export_folders(),
+        'next_number': get_next_number(),
+    })
+
+@app.route('/api/next-number')
+def api_next_number():
+    return jsonify({'number': get_next_number()})
+
+@app.route('/api/suggest/<int:idx>')
+def api_suggest(idx):
+    if idx<0 or idx>=len(CLIPS): return jsonify({'found':False}),404
+    mode = request.args.get('mode', 'vertical')
+    if mode == 'lateral':
+        return jsonify(suggest_lateral_deviation(idx))
+    if mode not in ('vertical', 'walking'): mode = 'vertical'
+    return jsonify(suggest_crop(idx, mode))
+
+@app.route('/api/batch-export', methods=['POST'])
+def api_batch_export():
+    body  = request.json or {}
+    preset = body.get('preset', 'sensecv')
+    mode   = body.get('mode', 'walking')
+    if preset not in PRESETS or mode not in ('walking', 'lateral'):
+        return jsonify({'status':'error','message':'invalid preset/mode'}),400
+    flt = _preset_filter(preset)
+    indices = [i for i, n in enumerate(CLIPS) if flt(n)]
+    out_dir = _preset_out_dir(preset, mode)
+    summary = export_set(indices, out_dir, mode=mode)
+    return jsonify({'status':'ok','preset':preset,'mode':mode, **summary})
+
+@app.route('/api/crop', methods=['POST'])
+def api_crop():
+    body  = request.json
+    idx   = int(body.get('clip_idx', 0))
+    start = float(body['start']); end = float(body['end'])
+    raw_name = re.sub(r'[^\w\-]','_',(body.get('name') or '').strip())
+    if not raw_name:
+        return jsonify({'status':'error','message':'Nome não pode ser vazio'}),400
+
+    occurrence = body.get('occurrence','sem_obstaculos')
+    parts = [raw_name, occurrence]
+    if occurrence == 'obstaculo':
+        parts.append(body.get('obs_pos') or 'centro')
+        response = body.get('response') or 'parada'
+        parts.append(response)
+        if response == 'desvio':
+            parts.append(body.get('desvio_dir') or 'direita')
+
+    folder_name = '_'.join(parts)
+
+    # Collision check
+    if name_exists(folder_name):
+        return jsonify({'status':'error','message':f'Já existe um clipe com o nome "{folder_name}"'}),409
+
+    export_folder = os.path.join(EXPORTS_DIR, folder_name)
+    os.makedirs(export_folder)
+
+    out_video = os.path.join(export_folder, folder_name+'.mp4')
+
+    try:
+        _ffmpeg_cut(clip_video_path(idx), start, end, out_video)
+    except Exception as e:
+        import shutil; shutil.rmtree(export_folder,ignore_errors=True)
+        return jsonify({'status':'error','message':str(e)}),500
+
+    # Save filtered sensor data alongside
+    try:
+        save_sensor_data(idx, start, end, export_folder)
+    except Exception as e:
+        pass  # sensor data save failure is non-fatal
+
+    # Update history
+    try:
+        number = int(raw_name) if raw_name.isdigit() else 0
+    except:
+        number = 0
+    h = load_history()
+    h.append({
+        'number':       number,
+        'folder':       folder_name,
+        'source_clip':  CLIPS[idx],
+        'source_idx':   idx,
+        'start':        round(start, 3),
+        'end':          round(end,   3),
+        'duration':     round(end-start, 3),
+        'occurrence':   occurrence,
+        'obs_pos':      body.get('obs_pos'),
+        'response':     body.get('response'),
+        'desvio_dir':   body.get('desvio_dir'),
+        'exported_at':  datetime.now().isoformat(timespec='seconds'),
+    })
+    save_history(h)
+
+    return jsonify({'status':'ok','file':folder_name+'.mp4','folder':folder_name,
+                    'export_folders': list_export_folders(),
+                    'next_number': get_next_number()})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', '5000'))
+    print(f'http://localhost:{port}  ({len(CLIPS)} clipes)')
+    app.run(debug=False, host='0.0.0.0', port=port, threaded=True)
