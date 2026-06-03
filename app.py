@@ -139,11 +139,27 @@ def find_clips():
     clips = []
     # (root, label, walking_only). The primary root is the supermarket footage
     # (held vertical); the extra roots are filmed horizontally throughout.
-    recursive_roots = set(ENV_EXTRA_CLIP_ROOTS + [UPLOADS_DIR])
-    roots = [(CLIPS_DIR, None, False, False)] + [
-        (r, os.path.basename(os.path.normpath(r)), True, r in recursive_roots) for r in EXTRA_CLIP_ROOTS]
+    recursive_roots = {
+        os.path.normcase(os.path.abspath(r))
+        for r in ENV_EXTRA_CLIP_ROOTS + [UPLOADS_DIR]
+    }
+    roots = []
+    seen_roots = set()
+
+    def add_root(root, label, walking_only, recursive):
+        root_abs = os.path.normcase(os.path.abspath(root))
+        if root_abs in seen_roots:
+            return
+        seen_roots.add(root_abs)
+        roots.append((root, label, walking_only, recursive))
+
+    add_root(CLIPS_DIR, None, False, False)
+    for r in EXTRA_CLIP_ROOTS:
+        recursive = os.path.normcase(os.path.abspath(r)) in recursive_roots
+        label = None if recursive else os.path.basename(os.path.normpath(r))
+        add_root(r, label, True, recursive)
     if os.path.isdir(EXPORTS_DIR):
-        roots.append((EXPORTS_DIR, 'exports', True, False))
+        add_root(EXPORTS_DIR, 'exports', True, False)
     for root, label, walking_only, recursive in roots:
         if not os.path.isdir(root):
             continue

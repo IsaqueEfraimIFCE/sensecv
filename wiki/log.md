@@ -5,6 +5,22 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-03] deploy | loaded 02-06-2026 IFCE example dataset on Fly
+- Uploaded the local `SenseCV-02-06-2026-IFCE-Gimbal` dataset to the Fly
+  volume through `/api/upload-zip` as the example dataset.
+- Fixed duplicate clip discovery when `SENSECV_EXTRA_CLIP_ROOTS` and
+  `SENSECV_UPLOADS_DIR` point at the same `/data/clips` root. Uploaded
+  recursive datasets now display as `SenseCV-.../01` instead of
+  `clips/SenseCV-.../01`.
+- Deployed new image:
+  `sensecv-api:deployment-01KT788C7KJBMCBXJMYGPPXCJE`.
+- Verified `https://sensecv-api.fly.dev/health` returned HTTP 200 with
+  `{status:"ok", clips:32}`.
+- Verified `/api/clips` starts with
+  `SenseCV-02-06-2026-IFCE-Gimbal/01`; `/api/data/0` returns 202 frame
+  samples and 57 active external input frames.
+- Pages touched: [[deployment-operations]], [[log]].
+
 ## [2026-06-03] fix | Fly no-dataset startup and warm machine
 - Fixed the viewer boot path for source-only Fly deployments with zero clips.
   `templates/index.html` now renders a no-dataset state and keeps the zip

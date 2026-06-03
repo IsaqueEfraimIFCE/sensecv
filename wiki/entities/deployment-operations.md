@@ -94,22 +94,24 @@ Verified on 2026-06-03:
 
 ```text
 Public URL: https://sensecv-api.fly.dev/
-Health: /health HTTP 200, clips=0
-Image: sensecv-api:deployment-01KT77HJCXDTV5X7V7BKWNN456
+Health: /health HTTP 200, clips=32
+Image: sensecv-api:deployment-01KT788C7KJBMCBXJMYGPPXCJE
 Machine: 0807567b062618
-Machine version: 3
+Machine version: 4
 Machine state: started
 ```
 
-`/api/clips` returns `{clips:[], groups:[], total:0}` for the current
-source-only image until a dataset is imported onto the Fly volume.
-The root viewer initializes in a no-dataset state instead of calling
-`loadClip(0)`, so the zip import panel remains usable with zero clips.
+`/api/clips` returns 32 example clips from
+`SenseCV-02-06-2026-IFCE-Gimbal/01` through `/32`, grouped as
+`SenseCV-02-06-2026-IFCE-Gimbal`.
+`/api/data/0` returns 202 `times`, 202 `accel`, and 202 `external_input`
+samples, with 57 active input frames.
 `/api/upload-zip` is live and returns a controlled 400 when no zip file is
 provided.
 
-The current GitHub-ready source image excludes bundled datasets. Import
-datasets through `/api/upload-zip` or place valid clip folders under
-`/data/clips`.
+The current GitHub-ready source image still excludes bundled datasets. The
+02-06-2026 IFCE example dataset lives on the Fly volume under `/data/clips`;
+future datasets can be imported through `/api/upload-zip` or placed as valid
+clip folders under `/data/clips`.
 
 
