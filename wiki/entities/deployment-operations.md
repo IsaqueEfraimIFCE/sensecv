@@ -16,7 +16,7 @@ HTTPS forced, single app process in region `gru`, and a Fly volume mounted at
 ## Fly configuration
 
 ```text
-App: SenseCV-api
+App: sensecv-api
 Region: gru
 Internal port: 8080
 Volume source: sensecv_data
@@ -36,17 +36,17 @@ Environment in `fly.toml`:
 ## Deploy
 
 ```powershell
-flyctl apps create SenseCV-api --org personal
-flyctl volumes create sensecv_data --region gru --size 20 -a SenseCV-api
-flyctl deploy -a SenseCV-api
+flyctl apps create sensecv-api --org personal
+flyctl volumes create sensecv_data --region gru --size 20 -a sensecv-api
+flyctl deploy -a sensecv-api
 ```
 
 Useful checks:
 
 ```powershell
-flyctl status -a SenseCV-api
-Invoke-WebRequest -Uri "https://SenseCV-api.fly.dev/health" -UseBasicParsing
-Invoke-WebRequest -Uri "https://SenseCV-api.fly.dev/api/clips" -UseBasicParsing
+flyctl status -a sensecv-api
+Invoke-WebRequest -Uri "https://sensecv-api.fly.dev/health" -UseBasicParsing
+Invoke-WebRequest -Uri "https://sensecv-api.fly.dev/api/clips" -UseBasicParsing
 ```
 
 `/health` returns `{status:"ok", clips:<count>}` after refreshing clip
@@ -85,9 +85,9 @@ The Flask dev entrypoint remains available for local use and now honors
 Verified on 2026-06-03:
 
 ```text
-Public URL: https://SenseCV-api.fly.dev/
+Public URL: https://sensecv-api.fly.dev/
 Health: /health HTTP 200, clips=32
-Image: SenseCV-api:deployment-01KT6Q473JV1BT873TH2DGWE12
+Image: sensecv-api:deployment-01KT6Q473JV1BT873TH2DGWE12
 Machine: 0807567b062618
 ```
 

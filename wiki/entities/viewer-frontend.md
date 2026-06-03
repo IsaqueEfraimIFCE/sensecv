@@ -2,7 +2,7 @@
 type: entity
 tags: [frontend, html, chartjs]
 code_refs: [templates/index.html]
-updated: 2026-06-02
+updated: 2026-06-03
 ---
 
 # templates/index.html - Viewer and annotator UI
@@ -17,8 +17,8 @@ Jinja injects bootstrap data: `CLIPS`, `CLIP_GROUPS`, `HISTORY`,
   jumps directly to the first clip in a source group such as
   `Supermercado Telefrango`, a SenseCV folder, or `exports`.
 - **Left column** - video, timeline canvas, time display with play button,
-  vertical warning banner, chart toggles, live value boxes, the crop and
-  classification panel, batch export controls, and export history.
+  vertical warning banner, chart toggles, live value boxes, the DroNet panel,
+  the crop and classification panel, batch export controls, and export history.
 - **Right column** - three Chart.js line charts: acceleration, gyroscope, and
   estimated velocity. Each has per-series toggles; the acceleration chart also
   has an `Input` trace when `/api/data` provides external button samples.
@@ -42,6 +42,10 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
   at the top of the acceleration chart.
 - **Timeline canvas** - draws the speed waveform, crop region, S/E markers, and
   playhead; click/drag to scrub.
+- **DroNet live panel** - Shows direction/steering, yaw, and collision
+  probability from `/api/dronet/<idx>`. Playback requests are deduped to 3 FPS;
+  paused and scrubbed states request the exact paused frame. See
+  [[dronet-live-classification]].
 - **Auto-suggested crop** - on `loadClip()`, `runAutoSuggest()` tries
   `lateral`, then `walking`, then `vertical`. Lateral-deviation cuts are the
   first choice; other modes are fallbacks only. A red banner appears if a
@@ -69,6 +73,6 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
 `e` mark end; `[` / `]` previous / next clip.
 
 ## Talks to
-[[api-routes]] (`/video/<idx>`, `/api/data/<idx>`, `/api/suggest/<idx>`,
-`/api/crop`, `/api/export-state`, `/api/history`).
+[[api-routes]] (`/video/<idx>`, `/api/data/<idx>`, `/api/dronet/<idx>`,
+`/api/suggest/<idx>`, `/api/crop`, `/api/export-state`, `/api/history`).
 

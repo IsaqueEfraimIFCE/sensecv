@@ -2,7 +2,7 @@
 type: entity
 tags: [backend, flask, python]
 code_refs: [app.py]
-updated: 2026-06-02
+updated: 2026-06-03
 ---
 
 # app.py - Flask backend
@@ -57,6 +57,8 @@ folders can appear in the UI without restarting.
 | `compute_velocities()` | IMU dead-reckoning to per-frame `{vx,vy,vz,speed}` | [[velocity-estimation]] |
 | `external_input_at_times()` | Aligns optional `external_sensors.json` button input to video frames | - |
 | `get_clip_data()` | Assembles `fps/duration/times/accel/rotation/velocity/external_input`; LRU cache, max 5 clips | - |
+| `_load_dronet_runtime()` | Lazily imports the Desktop DroNet PyTorch runtime and H5 weights | [[dronet-live-classification]] |
+| `dronet_frame_classification()` | Decodes one video frame, runs DroNet, and returns steering/yaw/collision JSON | [[dronet-live-classification]] |
 | `_orientation_walking_masks()` | Per-frame vertical plus walking boolean masks | [[orientation-detection]], [[walking-detection]] |
 | `_first_sustained()` | First run >= 1.5 s where a mask holds | [[crop-suggestion]] |
 | `suggest_crop()` | Crop proposal in `mode='vertical'` or `'walking'`; reports `has_vertical` | [[crop-suggestion]] |
@@ -72,12 +74,19 @@ folders can appear in the UI without restarting.
 `OrderedDict` capped at 5 entries. Re-opening a recent clip is instant; opening
 a 6th evicts the least-recently used.
 
+Live DroNet uses a separate cache. `_dronet_runtime` loads the model once on
+first `/api/dronet/<idx>` request, and `_dronet_cache` stores up to 300
+predictions keyed by clip display name, video mtime, and decoded frame index.
+See [[dronet-live-classification]].
+
 ## fps derivation
 `fps = 1e6 / median(diff(frame time_usec))`, robust to dropped frames versus a
 naive count/duration.
 
 ## Routes
-All HTTP endpoints are catalogued in [[api-routes]]. `/api/export-state` is the
+All HTTP endpoints are catalogued in [[api-routes]]. `/api/dronet/<idx>` is the
+live neural inference endpoint used by the viewer's DroNet panel.
+`/api/export-state` is the
 frontend polling endpoint: it refreshes clip discovery, prunes `history.json`
 against actual export folders, and returns clips/groups/history/export folders
 plus the current next export number.

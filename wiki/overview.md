@@ -42,7 +42,9 @@ source folder and includes an `exports` group for reviewing exported clips.
 | Browser viewer / annotator UI | [[viewer-frontend]] |
 | Raw/export clip folder structure | [[clip-data-model]], [[exports-output]] |
 | HTTP + JSON API surface | [[api-routes]] |
+| GitHub project state | [[github-repository]] |
 | Export ledger | [[history-json]] |
+| Live DroNet inference | [[dronet-live-classification]] |
 
 ## Core ideas
 
@@ -61,6 +63,8 @@ source folder and includes an `exports` group for reviewing exported clips.
   30-05-2026 gimbal dataset.
 - [[dronet-sensecv-02062026-3fps]] - fixed 3 FPS DroNet classifications and
   contact sheets over the 02-06-2026 gimbal dataset.
+- [[dronet-live-classification]] - on-demand DroNet predictions in the Flask
+  viewer for paused frames and 3 FPS playback.
 
 ## End-to-end flow
 

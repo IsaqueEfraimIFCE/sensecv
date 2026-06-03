@@ -1,5 +1,5 @@
 from flask import Flask, request, Response, render_template, jsonify
-import json, os, re, subprocess, math, zipfile, shutil
+import json, os, re, subprocess, math, zipfile, shutil, sys
 from datetime import datetime
 from collections import OrderedDict
 import numpy as np
@@ -323,6 +323,11 @@ _cache = OrderedDict()
 _walking_template_cache = {'mtime': None, 'templates': None, 'durations': None}
 _walking_classifier_cache = {'mtime': None, 'model': None}
 _classifier_feature_cache = OrderedDict()
+_dronet_runtime = {'model': None, 'preprocess_bgr': None, 'torch': None, 'error': None}
+_dronet_cache = OrderedDict()
+DRONET_DIR = os.environ.get('DRONET_DIR', r"C:\Users\Isaque\Desktop\dronet")
+DRONET_WEIGHTS = os.environ.get('DRONET_WEIGHTS', os.path.join(DRONET_DIR, "repo", "model", "model_weights.h5"))
+DRONET_SAMPLE_FPS = 3.0
 
 def get_clip_data(idx):
     key = CLIPS[idx]
@@ -346,6 +351,92 @@ def get_clip_data(idx):
     _cache[key]=data
     if len(_cache)>5: _cache.popitem(last=False)
     return data
+
+def _load_dronet_runtime():
+    if _dronet_runtime['model'] is not None or _dronet_runtime['error'] is not None:
+        return _dronet_runtime
+    try:
+        if DRONET_DIR not in sys.path:
+            sys.path.insert(0, DRONET_DIR)
+        import torch
+        from dronet_model import load_dronet, preprocess_bgr
+        _dronet_runtime['model'] = load_dronet(DRONET_WEIGHTS)
+        _dronet_runtime['preprocess_bgr'] = preprocess_bgr
+        _dronet_runtime['torch'] = torch
+    except Exception as e:
+        _dronet_runtime['error'] = str(e)
+    return _dronet_runtime
+
+def _dronet_direction(steering):
+    if abs(steering) < 0.1:
+        return 'STRAIGHT'
+    return 'RIGHT' if steering > 0 else 'LEFT'
+
+def dronet_frame_classification(idx, time_s, exact=False):
+    runtime = _load_dronet_runtime()
+    if runtime['error']:
+        return {'available': False, 'error': runtime['error']}
+
+    video_path = clip_video_path(idx)
+    mtime = os.path.getmtime(video_path)
+    try:
+        cap = cv2.VideoCapture(video_path)
+    except NameError:
+        import cv2 as _cv2
+        globals()['cv2'] = _cv2
+        cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return {'available': False, 'error': 'video unreadable'}
+
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if fps <= 0 or frame_count <= 0:
+        cap.release()
+        return {'available': False, 'error': 'invalid video metadata'}
+
+    duration = frame_count / fps
+    sample_time = max(0.0, min(float(time_s or 0.0), duration))
+    if not exact:
+        sample_time = math.floor(sample_time * DRONET_SAMPLE_FPS) / DRONET_SAMPLE_FPS
+    frame_idx = min(frame_count - 1, max(0, int(round(sample_time * fps))))
+
+    key = (CLIPS[idx], mtime, frame_idx)
+    if key in _dronet_cache:
+        _dronet_cache.move_to_end(key)
+        cap.release()
+        return _dronet_cache[key]
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        return {'available': False, 'error': 'frame decode failed', 'frame': frame_idx}
+
+    tensor, _crop = runtime['preprocess_bgr'](frame)
+    with runtime['torch'].no_grad():
+        steering_t, collision_t = runtime['model'](tensor)
+    steering = float(steering_t.item())
+    collision = float(collision_t.item())
+    yaw = steering * 90.0
+    result = {
+        'available': True,
+        'clip': CLIPS[idx],
+        'frame': frame_idx,
+        'time_s': round(frame_idx / fps, 4),
+        'requested_time_s': round(float(time_s or 0.0), 4),
+        'sample_fps': DRONET_SAMPLE_FPS,
+        'exact': bool(exact),
+        'source_fps': round(fps, 4),
+        'steering': steering,
+        'yaw_deg': yaw,
+        'direction': _dronet_direction(steering),
+        'collision_prob': collision,
+        'collision_label': 'COLLISION' if collision >= 0.5 else 'CLEAR',
+    }
+    _dronet_cache[key] = result
+    if len(_dronet_cache) > 300:
+        _dronet_cache.popitem(last=False)
+    return result
 
 # ─── Sensor data save ────────────────────────────────────────────────────────
 
@@ -1571,6 +1662,18 @@ def video(idx):
 def api_data(idx):
     if idx<0 or idx>=len(CLIPS): return jsonify({'error':'out of range'}),404
     return jsonify(get_clip_data(idx))
+
+@app.route('/api/dronet/<int:idx>')
+def api_dronet(idx):
+    if idx<0 or idx>=len(CLIPS): return jsonify({'available':False,'error':'out of range'}),404
+    try:
+        time_s = float(request.args.get('time', '0') or 0)
+    except ValueError:
+        time_s = 0.0
+    exact = request.args.get('exact') in ('1', 'true', 'yes')
+    result = dronet_frame_classification(idx, time_s, exact=exact)
+    status = 200 if result.get('available') else 503
+    return jsonify(result), status
 
 @app.route('/api/clips')
 def api_clips():

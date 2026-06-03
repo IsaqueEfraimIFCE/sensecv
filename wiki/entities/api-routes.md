@@ -2,7 +2,7 @@
 type: entity
 tags: [backend, api, http]
 code_refs: [app.py]
-updated: 2026-06-02
+updated: 2026-06-03
 ---
 
 # API routes
@@ -16,6 +16,7 @@ into the current `CLIPS` list.
 | GET | `/health` | JSON | `{status:"ok", clips:<count>}` after `refresh_clips()`; intended for Fly health checks |
 | GET | `/video/<int:idx>` | video/mp4 | Streams the clip's actual MP4 path; honors HTTP `Range` for seeking |
 | GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], name, index, total}`; cached |
+| GET | `/api/dronet/<int:idx>?time=&exact=` | JSON | Live DroNet steering/yaw/collision for a requested video time. See [[dronet-live-classification]] |
 | GET | `/api/clips` | JSON | `{clips[], groups[], total}` after `refresh_clips()` |
 | POST | `/api/upload-zip` | JSON | Imports a SenseCV-style `.zip`, refreshes clips, returns `{status,dataset,clips_added,clips,groups,total}` |
 | GET | `/api/history` | JSON | Pruned contents of [[history-json]] |
@@ -23,7 +24,7 @@ into the current `CLIPS` list.
 | GET | `/api/next-number` | JSON | `{number}` from actual export folders |
 | GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `vertical` / `walking` / `lateral`. See [[crop-suggestion]] |
 | POST | `/api/crop` | JSON | Performs the export. See [[export-pipeline]] |
-| POST | `/api/batch-export` | JSON | Runs `export_set()` over `{preset:'SenseCV'|'supermarket', mode:'walking'|'lateral'}` |
+| POST | `/api/batch-export` | JSON | Runs `export_set()` over `{preset:'sensecv'|'supermarket', mode:'walking'|'lateral'}` |
 
 ## `/api/export-state`
 Used by [[viewer-frontend]] polling every 5 seconds.
@@ -48,6 +49,30 @@ If a clip folder contains `external_sensors.json`, the backend returns
 is `1` while the latest external sensor sample has `button: 1`, otherwise `0`.
 Clips without the file return an empty array.
 
+## `/api/dronet`
+Live DroNet inference for the viewer's current frame.
+
+```text
+GET /api/dronet/<idx>?time=1.23&exact=1
+GET /api/dronet/<idx>?time=1.23&exact=0
+```
+
+`exact=1` maps `time` directly to the nearest source video frame. `exact=0`
+buckets time to 3 FPS (`floor(time * 3) / 3`) before choosing the frame. The
+frontend uses exact mode for paused/scrubbed frames and bucketed mode while
+playing.
+
+```jsonc
+{ "available": true, "frame": 30, "time_s": 0.9993,
+  "requested_time_s": 1.23, "sample_fps": 3.0, "exact": false,
+  "source_fps": 30.0213, "steering": 0.0577, "yaw_deg": 5.1956,
+  "direction": "STRAIGHT", "collision_prob": 0.9995,
+  "collision_label": "COLLISION" }
+```
+
+Failures return `{available:false,error}` with 503, except out-of-range clip
+indexes return 404.
+
 ## `/api/suggest` response
 ```jsonc
 // found
@@ -64,11 +89,11 @@ Clips without the file return an empty array.
 Synchronous: the response returns after every clip has been processed.
 
 ```jsonc
-{ "preset": "SenseCV", "mode": "lateral" }
+{ "preset": "sensecv", "mode": "lateral" }
 ```
 
 ```jsonc
-{ "status": "ok", "preset": "SenseCV", "mode": "lateral",
+{ "status": "ok", "preset": "sensecv", "mode": "lateral",
   "ok": 96, "skipped": 7, "failed": 0, "total": 103,
   "out_dir": "...\\SenseCV dataset (lateral)",
   "csv_path": "...\\SenseCV dataset (lateral)\\sources.csv" }

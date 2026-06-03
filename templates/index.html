@@ -76,6 +76,13 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .val-label{font-size:10px;color:var(--muted);margin-bottom:2px}
 .val-num{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
 .val-unit{font-size:9px;color:var(--muted);margin-top:1px}
+.dronet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
+.dronet-status{margin-top:7px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.dronet-status.err{color:var(--red)}
+.dronet-status.ok{color:var(--muted)}
+.dronet-collision{border-color:var(--border)}
+.dronet-collision.warn{border-color:var(--red)}
+.dronet-collision.warn .val-num{color:var(--red)!important}
 
 /* ── Crop ── */
 .crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
@@ -249,6 +256,16 @@ body.clip-horizontal .video-wrapper{height:55vh}
         <div class="val-box"><div class="val-label">Acel Y</div><div class="val-num" id="v-ay" style="color:var(--green)">–</div><div class="val-unit">m/s²</div></div>
         <div class="val-box"><div class="val-label">Acel Z</div><div class="val-num" id="v-az" style="color:var(--blue)">–</div><div class="val-unit">m/s²</div></div>
       </div>
+    </div>
+
+    <div class="section">
+      <h3>DroNet</h3>
+      <div class="dronet-grid">
+        <div class="val-box"><div class="val-label">Direção</div><div class="val-num" id="dn-dir" style="color:var(--green)">-</div><div class="val-unit">steering</div></div>
+        <div class="val-box"><div class="val-label">Yaw</div><div class="val-num" id="dn-yaw" style="color:var(--accent)">-</div><div class="val-unit">graus</div></div>
+        <div class="val-box dronet-collision" id="dn-collision-box"><div class="val-label">Colisão</div><div class="val-num" id="dn-collision" style="color:var(--gold)">-</div><div class="val-unit">prob.</div></div>
+      </div>
+      <div class="dronet-status" id="dn-status">Aguardando frame...</div>
     </div>
 
     <!-- Crop -->
@@ -452,6 +469,10 @@ let DATA       = null;
 const charts   = {};
 let cropStart  = null, cropEnd = null;
 const video    = document.getElementById('video');
+let dronetInFlight = false;
+let dronetPendingExact = null;
+let dronetLastKey = null;
+let dronetSeq = 0;
 
 // ═══ Video orientation (rotate-90° fit) ═════════
 // The wrapper has a fixed box (portrait for supermarket, landscape for SenseCV).
@@ -543,6 +564,7 @@ async function loadClip(idx) {
   document.getElementById('crop-start-disp').textContent = '–';
   document.getElementById('crop-end-disp').textContent   = '–';
   showVerticalWarning(false);
+  resetDronetPanel();
   updateExportBtn();
 
   // Supermercado (primary root) clips have bare names; extra-root clips are
@@ -580,6 +602,7 @@ async function loadClip(idx) {
   hideOverlay();
 
   // Automatically prefer lateral-deviation cuts; use other modes only as fallbacks.
+  requestDronet(true);
   runAutoSuggest();
 }
 
@@ -748,6 +771,64 @@ function nearestIdx(t){
   if(lo>0&&Math.abs(T[lo-1]-t)<Math.abs(T[lo]-t)) lo--;
   return lo;
 }
+
+function resetDronetPanel(){
+  dronetInFlight = false;
+  dronetPendingExact = null;
+  dronetLastKey = null;
+  dronetSeq++;
+  document.getElementById('dn-dir').textContent = '-';
+  document.getElementById('dn-yaw').textContent = '-';
+  document.getElementById('dn-collision').textContent = '-';
+  document.getElementById('dn-collision-box').classList.remove('warn');
+  const status = document.getElementById('dn-status');
+  status.className = 'dronet-status';
+  status.textContent = 'Aguardando frame...';
+}
+
+function renderDronet(d){
+  const status = document.getElementById('dn-status');
+  if(!d.available){
+    status.className = 'dronet-status err';
+    status.textContent = d.error || 'DroNet indisponível';
+    return;
+  }
+  document.getElementById('dn-dir').textContent = `${d.direction} ${d.steering >= 0 ? '+' : ''}${d.steering.toFixed(3)}`;
+  document.getElementById('dn-yaw').textContent = `${d.yaw_deg >= 0 ? '+' : ''}${d.yaw_deg.toFixed(1)}`;
+  document.getElementById('dn-collision').textContent = d.collision_prob.toFixed(3);
+  document.getElementById('dn-collision-box').classList.toggle('warn', d.collision_prob >= 0.5);
+  status.className = 'dronet-status ok';
+  status.textContent = `${d.exact ? 'frame pausado' : '3 fps'}: f${d.frame} t=${d.time_s.toFixed(3)}s ${d.collision_label}`;
+}
+
+async function requestDronet(exact=false){
+  if(!DATA) return;
+  const t = video.currentTime || 0;
+  const key = exact ? `exact:${Math.round(t * (DATA.fps || 30))}` : `bucket:${Math.floor(t * 3)}`;
+  if(key === dronetLastKey) return;
+  if(dronetInFlight){
+    dronetPendingExact = exact;
+    return;
+  }
+  dronetInFlight = true;
+  dronetLastKey = key;
+  const seq = dronetSeq;
+  try{
+    const r = await fetch(`/api/dronet/${currentIdx}?time=${encodeURIComponent(t)}&exact=${exact ? 1 : 0}`);
+    const d = await r.json();
+    if(seq === dronetSeq) renderDronet(d);
+  }catch(e){
+    if(seq === dronetSeq) renderDronet({available:false,error:'Erro ao consultar DroNet'});
+  }finally{
+    dronetInFlight = false;
+    if(dronetPendingExact !== null && seq === dronetSeq){
+      const nextExact = dronetPendingExact;
+      dronetPendingExact = null;
+      requestDronet(nextExact);
+    }
+  }
+}
+
 video.addEventListener('timeupdate',onTime);
 video.addEventListener('seeking',onTime);
 
@@ -759,10 +840,11 @@ let rafId=null;
 function syncLoop(){
   if(video.paused||video.ended){ rafId=null; return; }
   onTime();                                   // smooth cursor + values every frame
+  requestDronet(false);
   rafId=requestAnimationFrame(syncLoop);
 }
 video.addEventListener('play', ()=>{ btnPlay.textContent='⏸'; if(!rafId) syncLoop(); });
-video.addEventListener('pause',()=>{ btnPlay.textContent='▶'; onTime(); });
+video.addEventListener('pause',()=>{ btnPlay.textContent='▶'; onTime(); requestDronet(true); });
 video.addEventListener('ended',()=>{ btnPlay.textContent='▶'; });
 
 function onTime(){
@@ -782,6 +864,7 @@ function onTime(){
   if(DATA.rotation[idx]) document.getElementById('v-rx').textContent=DATA.rotation[idx][0].toFixed(4);
   if(DATA.velocity[idx]) document.getElementById('v-spd').textContent=DATA.velocity[idx].speed.toFixed(4);
   drawTimeline();
+  if(video.paused) requestDronet(true);
 }
 
 // ═══ Timeline ═══════════════════════════════════

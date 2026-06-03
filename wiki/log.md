@@ -5,6 +5,38 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-03] docs | GitHub remote and current SenseCV project state
+- Captured the GitHub project state in [[github-repository]]: local branch
+  `master`, remote `origin https://github.com/IsaqueEfraimIFCE/sensecv.git`,
+  GitHub account `IsaqueEfraimIFCE`, and the latest committed hashes known at
+  the time of documentation.
+- Documented the source-only policy for the GitHub repository: datasets, MP4s,
+  generated DroNet outputs, upload folders, exports, and local runtime files
+  stay out of Git through `.gitignore` / `.dockerignore`.
+- Normalized Fly deployment docs to the real lowercase app name
+  `sensecv-api` and public URL `https://sensecv-api.fly.dev/`.
+- Pages touched: [[overview]], [[index]], [[github-repository]],
+  [[deployment-operations]], [[api-routes]], [[log]].
+
+## [2026-06-03] feature | live DroNet classification in Flask viewer
+- Added `/api/dronet/<idx>?time=<seconds>&exact=<0|1>` to `app.py`.
+  `exact=1` classifies the nearest paused frame; `exact=0` buckets time to
+  3 FPS for playback updates.
+- Backend lazily loads the local Desktop DroNet PyTorch port and H5 weights
+  on first inference request, then caches runtime state and up to 300
+  frame-level predictions keyed by clip, video mtime, and frame index.
+- Added a compact DroNet panel to `templates/index.html` under the live sensor
+  values. It shows direction/steering, yaw degrees, collision probability, and
+  the source frame/time. Collision probability >= 0.5 gets red emphasis.
+- Frontend behavior: initial clip load and paused/scrubbed frames request exact
+  inference; playback requests are deduped to one request per 3 FPS bucket.
+- Verified `python -m py_compile app.py`, Flask test client for
+  `/api/dronet/0?time=0&exact=1`, and live server on
+  `http://127.0.0.1:5001` because port 5000 had a stale/nonmatching process.
+- Pages touched: [[overview]], [[index]], [[app-backend]], [[api-routes]],
+  [[viewer-frontend]], [[dronet-live-classification]],
+  [[dronet-sensecv-02062026-3fps]], [[log]].
+
 ## [2026-06-03] ingest | DroNet 3 FPS classifications for SenseCV 02-06-2026 gimbal
 - Added `run_sensecv_02062026_dronet_3fps.py`, which imports the local DroNet
   model from `C:\Users\Isaque\Desktop\dronet`, samples every

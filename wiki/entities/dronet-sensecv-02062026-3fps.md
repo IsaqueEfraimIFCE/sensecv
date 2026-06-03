@@ -14,6 +14,9 @@ gimbal dataset, sampled at 3 frames per second.
 This differs from [[dronet-samsung-samples]]: it is exhaustive over the target
 folder at a fixed sample rate, not a deterministic random subset.
 
+It also differs from [[dronet-live-classification]], which runs on-demand from
+Flask for the viewer's current paused frame or 3 FPS playback bucket.
+
 ## Inputs
 
 - Video root:
