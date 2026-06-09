@@ -9,33 +9,27 @@ __pycache__/
 .venv/
 venv/
 
-# Runtime state
-server.err.log
-server.out.log
+# Local runtime state and datasets
+.env
+data/**
+!data/
+!data/**/
+!data/**/.gitkeep
+logs/**
+!logs/
+!logs/.gitkeep
 *.log
-history.json
-exports/
-uploaded_datasets/
 
-# Large/local datasets and generated outputs
-2026_*/
-SenseCV dataset/
-SenseCV dataset (lateral)/
-Supermercado dataset/
-Supermercado dataset (lateral)/
-SenseCV-*/
-Supermercado dataset*/
-dronet_samsung_random_samples/
-dronet_sensecv_02062026_3fps/
+# Generated media and archives
 *.mp4
 *.zip
+*.avi
+*.mov
 
-# Local tooling
+# Local tooling / editor
 .claude/
 .codex/
 .agents/
-
-# OS/editor
 .DS_Store
 Thumbs.db
 .idea/

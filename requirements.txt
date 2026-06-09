@@ -2,5 +2,6 @@
 gunicorn>=23,<24
 imageio-ffmpeg>=0.6,<1
 numpy>=2,<3
+opencv-python-headless>=4.10,<5
 scikit-learn>=1.6,<2
 

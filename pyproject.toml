@@ -1,0 +1,8 @@
+[project]
+name = "sensecv"
+version = "0.1.0"
+description = "Flask tool for reviewing SenseCV walking clips and optional DroNet inference."
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

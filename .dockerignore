@@ -1,8 +1,6 @@
-﻿*
-!app.py
-!templates/
-!templates/**
+*
+!src/
+!src/**
 !requirements.txt
-!Dockerfile
-!fly.toml
-
+!deploy/
+!deploy/**

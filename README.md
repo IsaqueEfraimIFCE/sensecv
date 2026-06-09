@@ -1,43 +1,43 @@
-# SenseCV
+# senseCV
 
-SenseCV is a Flask web app for reviewing recorded walking clips, visualizing
-video-synchronized IMU streams, importing SenseCV-style datasets, and exporting
-annotated crop windows.
+senseCV is a Flask application for reviewing recorded walking clips, visualizing synchronized video/IMU streams, importing SenseCV-style datasets, exporting annotated crop windows, and optionally running DroNet inference.
 
-## Features
-
-- Video player with synchronized acceleration, gyroscope, velocity, and external
-  input charts.
-- SenseCV-style `.zip` dataset upload through `/api/upload-zip`.
-- Automatic crop suggestions for walking and lateral-deviation windows.
-- Exported clips with rebased `frames.json`, `accelerations.json`,
-  `rotations.json`, and optional `external_sensors.json`.
-- Fly.io deployment using `Dockerfile` and `fly.toml`.
-
-## Dataset Format
-
-Upload a zip containing one or more clip folders. Nested wrapper folders are
-accepted. Each clip folder needs:
+## Project Structure
 
 ```text
-video.mp4
-frames.json
-accelerations.json
-rotations.json
+senseCV/
+  src/sensecv/              Flask application package
+    app.py                  Web app, APIs, crop/export logic
+    templates/index.html    Browser viewer/annotator UI
+  scripts/                  Local CLIs and maintenance scripts
+  third_party/dronet/       Vendored DroNet runtime, paper sources, upstream repo, weights
+  docs/wiki/                Maintained project wiki
+  deploy/                   Dockerfile and Fly.io config
+  data/                     Local-only datasets, exports, uploads, generated outputs
+  logs/                     Local-only server logs
 ```
 
-Optional files such as `external_sensors.json`, `locations.json`,
-`gps_status.json`, and `magnetometer.json` may also be present. When
-`external_sensors.json` contains `button: 1`, the UI shows an orange `Input`
-trace on the acceleration chart.
+`data/` is intentionally ignored by Git. Put clip folders in `data/clips/`, imported/reference datasets in `data/datasets/`, and generated outputs will go to `data/exports/`, `data/derived/`, or `data/dronet_results/`.
 
-## Local Run
+## Local Setup
 
 ```powershell
+cd C:\Users\Isaque\Desktop\senseCV
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python app.py
+```
+
+For DroNet inference, also install:
+
+```powershell
+pip install -r requirements-dronet.txt
+```
+
+## Run
+
+```powershell
+.\scripts\run_server.ps1
 ```
 
 Open:
@@ -46,24 +46,47 @@ Open:
 http://127.0.0.1:5000
 ```
 
-## Fly Deploy
+Equivalent direct command:
 
 ```powershell
-flyctl apps create sensecv-api --org personal
-flyctl volumes create sensecv_data --region gru --size 20 -a sensecv-api
-flyctl deploy -a sensecv-api
+$env:PYTHONPATH = "$PWD\src"
+python -m sensecv.app
 ```
 
-Production URL:
+## Data Configuration
+
+The app defaults to these local paths:
 
 ```text
-https://sensecv-api.fly.dev/
+data/clips
+data/datasets
+data/exports
+data/uploaded_datasets
+data/history.json
 ```
 
-Datasets uploaded in production are stored under `/data/clips` through
-`SENSECV_UPLOADS_DIR`.
+Override them with environment variables if needed. See `.env.example` for the full list.
 
-## Wiki
+## Batch Scripts
 
-Project documentation lives in `wiki/`. Start with `wiki/index.md` and
-`wiki/overview.md`.
+```powershell
+python scripts\export_sensecv.py sensecv walking
+python scripts\run_sensecv_02062026_dronet_3fps.py
+python scripts\run_samsung_dronet_samples.py
+```
+
+Most scripts accept environment overrides for dataset roots and output directories.
+
+## Deploy
+
+From the project root:
+
+```powershell
+flyctl deploy -c deploy\fly.toml
+```
+
+The container uses `src/sensecv/app.py` through `gunicorn sensecv.app:app` and stores production mutable data on the Fly volume mounted at `/data`.
+
+## Documentation
+
+Start with `docs/wiki/index.md` and `docs/wiki/overview.md`.
