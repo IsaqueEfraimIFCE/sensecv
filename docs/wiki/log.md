@@ -5,6 +5,29 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-09] git | published source-only project commit to GitHub
+- Read the wiki and followed the [[github-repository]] source-only policy:
+  local datasets, exports, `history.json`, `.env`, logs, generated media, and
+  Python caches remain ignored.
+- Added `.env` to `.gitignore` while keeping `.env.example` tracked.
+- Created local commit `99dd97a Commit SenseCV project source`, then found the
+  checkout had no `origin` remote configured, so the commit was not visible on
+  GitHub.
+- Added `origin https://github.com/IsaqueEfraimIFCE/sensecv.git`.
+- Initial push was rejected because GitHub already had remote history through
+  `bcf1859 Load Fly example dataset`; histories were unrelated.
+- Preserved the local root commit as branch `local-root-snapshot`, created a
+  publish commit on top of `origin/master`, and pushed a fast-forward update:
+  `bcf1859..8d3c6ad`.
+- Current GitHub `master` is
+  `8d3c6ad4ece95653f3dbd97d78ac4d6301bc9042`
+  (`Publish SenseCV project source`), and local `master` tracks
+  `origin/master`.
+- Verification: `python -m py_compile` passed for `src/sensecv/app.py` and
+  the scripts using an ignored temporary cache; remote `refs/heads/master`
+  resolved to `8d3c6ad4ece95653f3dbd97d78ac4d6301bc9042`.
+- Pages touched: [[github-repository]], [[log]].
+
 ## [2026-06-06] merge | unified DroNet source/wiki into PilotGuru
 - Vendored the durable DroNet source layer from `C:\Users\Isaque\Desktop\dronet`
   into `dronet/`: PyTorch model port, helper scripts, paper sources, and
