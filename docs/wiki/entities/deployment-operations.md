@@ -2,7 +2,7 @@
 type: entity
 tags: [deployment, fly, docker, api]
 code_refs: [Dockerfile, fly.toml, requirements.txt, app.py]
-updated: 2026-06-03
+updated: 2026-06-12
 ---
 
 # Deployment and operations
@@ -90,16 +90,32 @@ The Flask dev entrypoint remains available for local use and now honors
 
 ## Latest observed state
 
-Verified on 2026-06-03:
+Verified on 2026-06-12:
 
 ```text
 Public URL: https://sensecv-api.fly.dev/
 Health: /health HTTP 200, clips=32
-Image: sensecv-api:deployment-01KT788C7KJBMCBXJMYGPPXCJE
+Image: sensecv-api:deployment-01KTY1JEYZ... (version 6)
 Machine: 0807567b062618
-Machine version: 4
 Machine state: started
 ```
+
+Frame-selection metrics on Fly: SSIM and VIF work (`sewar` is in
+`requirements.txt`); DINOv2 and LPIPS return a controlled
+`metric ... indisponivel: No module named 'torch'` error in the selection
+payload because the slim image deliberately excludes torch (~2 GB and the
+shared-1GB VM would likely OOM). Use the local server for those metrics.
+
+## Gotchas
+
+- `deploy/fly.toml` `[build].dockerfile` is resolved **relative to the config
+  file**, so it must be `"Dockerfile"`, not `"deploy/Dockerfile"`. Deploy from
+  the repo root with `flyctl deploy -c deploy/fly.toml -a sensecv-api` (the
+  repo root stays the build context for `COPY src ./src`).
+- With `SENSECV_DATA_DIR=/data`, `CLIPS_DIR` defaults to `/data/clips`, the
+  same path as `SENSECV_UPLOADS_DIR`. `find_clips()` must scan that root
+  recursively or nested uploaded datasets are invisible (`clips=0`); fixed on
+  2026-06-12 in `app.py › find_clips()`.
 
 `/api/clips` returns 32 example clips from
 `SenseCV-02-06-2026-IFCE-Gimbal/01` through `/32`, grouped as

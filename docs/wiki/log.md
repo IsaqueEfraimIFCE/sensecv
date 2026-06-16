@@ -5,6 +5,109 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-16] fix | sensemodel preprocessing (raw 0-255, not /255)
+- `/api/sensemodel` returned near-constant predictions. Cause: the exported
+  model is MobileNetV2 with an embedded `Rescaling(1/127.5, -1)` layer, so it
+  expects raw 0-255 input; the route was also dividing by 255, collapsing the
+  effective range to ~[-1,-0.992]. Removed the `/255.0` — predictions now vary
+  per frame (obstacle flips NONE/OBSTACLE, deviation LEFT/RIGHT/NONE). Color
+  stays BGR→RGB, 224×224×3. Documented in [[api-routes]].
+
+## [2026-06-16] frontend | wired SenseCV + manifest panels, enabled .keras model
+- Added the **SenseCV (.keras) live panel** and **manifest export panel** to
+  `templates/index.html`, the two UIs documented in [[viewer-frontend]] but
+  missing from the recovered frontend. SenseCV inference piggybacks on
+  `requestDronet()` so it shares the play/pause/scrub triggers; manifest export
+  plans → exports clip-by-clip → builds the review MP4.
+- Installed `tensorflow-cpu` into `.venv` and copied the user's
+  `best_model.keras` (224×224×3, two heads 2+3) to the project root, so
+  `/api/sensemodel` now returns real predictions instead of the controlled 503.
+  Added `requirements-sensemodel.txt`.
+- Deleted the stale `C:\Users\Isaque\Desktop\senseCV` copy (was junk + a subset
+  of this checkout); its lone unique file was the lost-panel spec, now realized.
+
+## [2026-06-15] recovery | rebuilt deleted wiki + re-implemented lost routes
+- The `docs/wiki` tree was deleted; restored from the GitHub base plus replayed
+  session edits, and the 11 DroNet/meta pages were copied from the intact
+  `C:\Users\Isaque\sensecv` checkout. Both wiki copies are back to 38 pages.
+- Recovered two dataset scripts missing from `sensecv` entirely
+  (`make_clear_ssim_last1s_dataset.py`, `make_clear_metric_last1s_dataset.py`)
+  from transcripts into `scripts/`.
+- `/api/manifest-export` (+`/clip`, `/review`) and `/api/sensemodel` had no
+  surviving source anywhere (only this wiki documented them), so they were
+  **re-implemented from the spec**, not recovered: `plan_manifest_export()`,
+  `export_manifest_clip()`, `build_manifest_review()`, and
+  `sensemodel_frame_classification()` in `app.py`, mirroring the DroNet
+  lazy-load + graceful-degrade pattern. Added `openpyxl` to `requirements.txt`.
+- Verified by Flask test client: planning with a synthetic `.xlsx` queued 3
+  clips with composed labels, a clip export cut + sensor/SSIM save succeeded,
+  and the review MP4 built; `sensemodel` returns its controlled 503 (no `.keras`
+  model in this checkout). Frontend wiring (batch manifest panel, sensemodel
+  panel) is NOT yet added — backend + docs only.
+- pages touched: [[api-routes]], [[log]]
+
+## [2026-06-12] feature | IMU event labeling from the criterios PDF
+- Implemented `data/uploaded_datasets/criterios_imu_video_orientando.pages.pdf`:
+  `imu_quality_report()` (section 1 checklist + verdict), `detect_imu_events()`
+  (desvio/reducao/parada with T1/T2, acao/decisao/expandido windows, and
+  alta/baixa/descartar confidence), route `/api/imu-events/<idx>?delta=`,
+  viewer "Eventos IMU" panel, and `scripts/imu_event_report.py` batch CSVs.
+- Desvio uses gravity-projected yaw rate when the capture rotates, falling
+  back to drift-corrected lateral velocity on gimbal-stabilized clips
+  (max yaw ≈ 11°/s there). Validated on the 32 IFCE manifest clips: 26/32
+  correct directions, 3 misses, 2 of 3 wrong flagged baixa.
+- Pages touched: [[imu-event-labeling]] (new), [[api-routes]],
+  [[viewer-frontend]], [[index]], [[log]].
+
+## [2026-06-12] deploy | metric selector live locally and on Fly
+- Local: `scripts/run_server.bat` on port 5000; all four metrics verified
+  (`lpips`/`sewar` installed into `.venv`).
+- Fly: redeployed `sensecv-api` (machine version 6). SSIM + VIF work; DINOv2 +
+  LPIPS return a controlled "indisponivel" error (no torch in the slim image).
+  Added `sewar` to `requirements.txt`.
+- Fixed two deploy bugs: `[build].dockerfile` path in `deploy/fly.toml` is
+  config-relative (`"Dockerfile"`), and `find_clips()` skipped the recursive
+  scan when `CLIPS_DIR` == uploads root (`/data/clips`), which made the Fly app
+  report `clips=0`.
+- Pages touched: [[deployment-operations]], [[log]].
+
+## [2026-06-12] feature | metric selector for frame selection in the viewer
+- `app.py`: `ssim_frame_selection()` now takes `metric='ssim'|'dinov2'|'lpips'|'vif'`
+  with lazy-loaded backends and per-metric default thresholds
+  (`DEFAULT_METRIC_THRESHOLDS`); `/api/ssim` + `/api/suggest` accept `?metric=`,
+  `/api/crop` accepts body `ssim_metric`. Score still reported as `ssim_prev`.
+- `templates/index.html`: "Métrica" dropdown beside the threshold control;
+  changing it resets the threshold to the metric default and widens the slider
+  range for VIF (min 0.5). Suggest, visualizer, and export all send the metric.
+- Verified via Flask test client: all 4 metrics return selections on clip 0;
+  invalid metric → 400.
+- Pages touched: [[api-routes]], [[viewer-frontend]], [[log]].
+
+## [2026-06-12] ingest | DINOv2/LPIPS/VIF clear last-1s dataset variants
+- Added `scripts/make_clear_metric_last1s_dataset.py`: same last-1-second
+  selection pipeline as the SSIM clear supplement, with a pluggable metric
+  (`--metric dinov2|lpips|vif`).
+- Built all three over the same 112 uploaded clips (112/112 ok, labels match
+  files): DINOv2 0.98 → 444 images, LPIPS 0.95 → 476, VIF 0.70 → 1386
+  (SSIM 0.95 reference: 517). VIF's default threshold was lowered to 0.70
+  because consecutive-frame VIF sits at 0.60–0.93.
+- New deps installed: `lpips` 0.1.4, `sewar` 0.4.8 (DINOv2 via torch.hub).
+- Variants are not merged into `data/derived/clear/images/`.
+- Pages touched: [[clear-dataset]], [[index]].
+
+## [2026-06-11] docs | synchronized wiki after clear repair and normalization
+- Added [[clear-dataset]] to document the clear/no-obstacle image pool, the
+  517-image SSIM 0.95 supplement, and the 12 stale label rows removed from
+  `clear_ssim095_last1s_until_112`.
+- Added [[dataset-normalization]] for the historical
+  `normalized_14_730fps_420hz` build: 14.730 FPS video and 420 Hz sensor
+  streams.
+- Updated backend/API/frontend wiki pages for current `data/` paths, recursive
+  dataset discovery, capture-quality badges, `/api/sensemodel`, and local
+  model/runtime notes.
+- Pages touched: [[clear-dataset]], [[dataset-normalization]], [[api-routes]],
+  [[viewer-frontend]], [[app-backend]], [[index]], [[log]].
+
 ## [2026-06-09] git | published source-only project commit to GitHub
 - Read the wiki and followed the [[github-repository]] source-only policy:
   local datasets, exports, `history.json`, `.env`, logs, generated media, and
@@ -407,5 +510,4 @@ Append-only. One entry per operation. Greppable prefix:
 - Open questions filed: whether [[walking-detection]] should use fused `speed`
   from [[velocity-estimation]]; frame-exact vs keyframe-copy cut tradeoff in
   [[export-pipeline]].
-
 

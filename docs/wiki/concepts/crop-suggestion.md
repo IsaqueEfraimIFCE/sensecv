@@ -2,7 +2,7 @@
 type: concept
 tags: [algorithm, workflow]
 code_refs: [app.py, templates/index.html]
-updated: 2026-05-30
+updated: 2026-06-11
 ---
 
 # Crop suggestion
@@ -16,9 +16,35 @@ a clip so the operator rarely sets markers by hand. Exposed at
 |---|---|---|
 | `vertical` | [[orientation-detection]] `vertical` | first sustained portrait period; the broader setup-to-end proposal |
 | `walking` (auto) | exported history first; otherwise `vertical AND walking` ([[walking-detection]]) | walking-only crop that matches known exports and falls back to detector logic for new clips |
-| `lateral` | gravity-removed horizontal accel magnitude | longest sustained lateral burst ≥ 0.2 s — for "swerve / sidestep" events |
+| `lateral` | relative phone roll from accelerometer gravity direction | strongest sustained intentional left/right phone tilt over 1 s |
 
 ## Lateral deviation (`mode='lateral'`)
+Current implementation: `suggest_lateral_deviation(idx)` reads `frames.json`
+and `accelerations.json`, interpolates acceleration onto frame timestamps,
+estimates phone roll with configurable `atan2(num_axis, den_axis)` axes
+(defaults `y,z`), subtracts a neutral baseline from the first 0.5-1.0 s, and
+smooths relative roll with a 100-200 ms rolling mean. It slides a 1 s window and
+scores `mean_absolute_relative_roll * sign_consistency`, where
+`sign_consistency = abs(mean(sign(relative_roll)))`.
+
+Windows are rejected below `SENSECV_LATERAL_TILT_THRESHOLD_DEG` (default 0.0)
+or below `SENSECV_LATERAL_SIGN_CONSISTENCY_THRESHOLD` (default 0.0). With both
+defaults at zero, every clip returns its best-scoring window — full-scan
+lateral detection is 589 of 589 clips. This restores the original
+"must happen in every lateral deviation clip" behavior of the old
+velocity-based detector (see below); the operator filters non-deviations by
+not classifying those exports. Stricter gating is still available by setting
+the env vars (the 2026-06-11 intermediate defaults 15.0 / 0.75 detected 68 of
+589; the original 25.0 / 0.90 detected 45). The best
+valid window returns start/end seconds, start/end frame IDs, score, mean roll,
+mean absolute roll, max roll, sign consistency, and `predicted_direction`.
+Positive mean roll is `right`; negative mean roll is `left`. Use
+`SENSECV_LATERAL_ROLL_INVERT=1` if the phone axis is reversed.
+
+The detector no longer uses long-term double integration of acceleration as the
+main signal.
+
+### Previous velocity notes
 `suggest_lateral_deviation(idx)` in `app.py` returns the **1-second window
 with the highest mean |lateral velocity|**, calibrated against the operator's
 5 manually-cut deviation exports in [[history-json]] (entries 6-10, SenseCV

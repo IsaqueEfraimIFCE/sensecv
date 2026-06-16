@@ -28,7 +28,7 @@ header h1{font-size:15px;font-weight:600}
 .nav-btn:disabled{opacity:.3;cursor:default}
 .clip-counter{font-size:12px;color:var(--muted);white-space:nowrap}
 
-#group-select,#clip-select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px}
+#group-select,#clip-select,#ssim-metric{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px}
 #group-select{max-width:190px}
 #clip-select{max-width:260px}
 #group-select:focus,#clip-select:focus{outline:none;border-color:var(--accent)}
@@ -217,6 +217,19 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .ssim-review-links.hidden{display:none}
 .ssim-review-links a{border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:4px 7px;text-decoration:none}
 .ssim-review-links a:hover{border-color:var(--accent);color:var(--accent)}
+.imu-control{display:grid;grid-template-columns:90px 1fr;gap:7px;align-items:center}
+.imu-control select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px}
+.imu-events{margin-top:7px;display:flex;flex-direction:column;gap:6px}
+.imu-events.hidden{display:none}
+.imu-event{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:6px 8px;font-size:11px}
+.imu-event .imu-head-line{display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
+.imu-event .imu-type{font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.imu-conf-alta{color:#5dd39e}
+.imu-conf-baixa{color:#e8c468}
+.imu-conf-descartar{color:#e87468}
+.imu-windows{display:flex;gap:6px;margin-top:5px}
+.imu-windows button{flex:none;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:3px 7px;cursor:pointer;font-variant-numeric:tabular-nums}
+.imu-windows button:hover{border-color:var(--accent);color:var(--accent)}
 </style>
 </head>
 <body>
@@ -291,6 +304,15 @@ body.clip-horizontal .video-wrapper{height:55vh}
       <div class="dronet-status" id="dn-status">Aguardando frame...</div>
     </div>
 
+    <div class="section">
+      <h3>SenseCV (.keras)</h3>
+      <div class="dronet-grid">
+        <div class="val-box dronet-collision" id="sm-obstacle-box"><div class="val-label">Obstáculo</div><div class="val-num" id="sm-obstacle" style="color:var(--gold)">-</div><div class="val-unit">prob.</div></div>
+        <div class="val-box"><div class="val-label">Desvio</div><div class="val-num" id="sm-deviation" style="color:var(--accent)">-</div><div class="val-unit">prob.</div></div>
+      </div>
+      <div class="dronet-status" id="sm-status">Aguardando frame...</div>
+    </div>
+
     <!-- Crop -->
     <div class="section" id="crop-section">
       <h3>Recortar clipe</h3>
@@ -351,7 +373,29 @@ body.clip-horizontal .video-wrapper{height:55vh}
         <button class="btn" id="btn-suggest-lateral" data-mode="lateral">⬦ Desvio lateral</button>
       </div>
       <div class="form-row">
-        <label>SSIM</label>
+        <label>Eventos IMU</label>
+        <div class="imu-control">
+          <select id="imu-delta">
+            <option value="0.5">Δ 0.5s</option>
+            <option value="1.0" selected>Δ 1.0s</option>
+            <option value="1.5">Δ 1.5s</option>
+          </select>
+          <button class="btn" id="btn-imu-events" type="button">⌁ Detectar</button>
+        </div>
+      </div>
+      <div class="ssim-summary hidden" id="imu-quality"></div>
+      <div class="imu-events hidden" id="imu-events"></div>
+      <div class="form-row">
+        <label>Métrica</label>
+        <select id="ssim-metric">
+          <option value="ssim" selected>SSIM</option>
+          <option value="dinov2">DINOv2</option>
+          <option value="lpips">LPIPS</option>
+          <option value="vif">VIF</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label id="ssim-threshold-label">SSIM</label>
         <div class="ssim-control">
           <input id="ssim-threshold-range" type="range" min="0.900" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
           <input id="ssim-threshold" type="number" min="0.001" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
@@ -360,7 +404,7 @@ body.clip-horizontal .video-wrapper{height:55vh}
       <div class="ssim-summary" id="ssim-summary">SSIM: aguardando sugestao</div>
       <div class="ssim-visualizer hidden" id="ssim-visualizer">
         <div class="ssim-head">
-          <div class="ssim-title">Frames SSIM</div>
+          <div class="ssim-title" id="ssim-strip-title">Frames selecionados</div>
           <button class="ssim-refresh" id="btn-ssim-refresh" type="button">Atualizar</button>
         </div>
         <div class="ssim-strip" id="ssim-strip"></div>
@@ -380,6 +424,12 @@ body.clip-horizontal .video-wrapper{height:55vh}
         Não interfere em <code>history.json</code>.
       </p>
       <div class="btn-row">
+        <button class="btn" id="btn-batch-all-walk"
+                data-preset="all" data-mode="walking">Todos os videos - caminhada</button>
+        <button class="btn" id="btn-batch-all-lat"
+                data-preset="all" data-mode="lateral">Todos os videos - desvio lateral</button>
+      </div>
+      <div class="btn-row">
         <button class="btn" id="btn-batch-sm-walk"
                 data-preset="supermarket" data-mode="walking">Supermercado · caminhada</button>
         <button class="btn" id="btn-batch-sm-lat"
@@ -391,6 +441,23 @@ body.clip-horizontal .video-wrapper{height:55vh}
         <button class="btn" id="btn-batch-sv-lat"
                 data-preset="sensecv" data-mode="lateral">SenseCV · desvio lateral</button>
       </div>
+      <div class="ssim-review-links hidden" id="batch-export-links"></div>
+    </div>
+
+    <!-- Manifest export -->
+    <div class="section">
+      <h3>Exportação por manifesto (.xlsx)</h3>
+      <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
+        Exporta cada clipe dos datasets enviados cuja pasta casa com um
+        <code>ID</code> do manifesto <code>.xlsx</code>. Grava em
+        <code>data/derived/manifest_exports/</code>. Processa um clipe por vez.
+      </p>
+      <div class="btn-row">
+        <button class="btn" id="btn-manifest-walk" data-manifest-mode="walking">Manifesto · caminhada</button>
+        <button class="btn" id="btn-manifest-lat" data-manifest-mode="lateral">Manifesto · desvio lateral</button>
+      </div>
+      <div class="dronet-status" id="manifest-progress"></div>
+      <div class="ssim-review-links hidden" id="manifest-export-links"></div>
     </div>
 
     <!-- Dataset upload -->
@@ -514,6 +581,10 @@ let dronetInFlight = false;
 let dronetPendingExact = null;
 let dronetLastKey = null;
 let dronetSeq = 0;
+let sensemodelInFlight = false;
+let sensemodelPendingExact = null;
+let sensemodelLastKey = null;
+let sensemodelSeq = 0;
 
 // ═══ Video orientation (rotate-90° fit) ═════════
 // The wrapper has a fixed box (portrait for supermarket, landscape for SenseCV).
@@ -623,6 +694,7 @@ async function loadClip(idx) {
   document.getElementById('crop-start-disp').textContent = '–';
   document.getElementById('crop-end-disp').textContent   = '–';
   updateSsimSummary(null);
+  resetImuEvents();
   showVerticalWarning(false);
   resetDronetPanel();
   updateExportBtn();
@@ -688,6 +760,7 @@ function showNoClipsState(){
   document.getElementById('crop-start-disp').textContent = '–';
   document.getElementById('crop-end-disp').textContent = '–';
   updateSsimSummary(null);
+  resetImuEvents();
   resetDronetPanel();
   updateExportBtn();
   hideOverlay();
@@ -872,6 +945,62 @@ function resetDronetPanel(){
   const status = document.getElementById('dn-status');
   status.className = 'dronet-status';
   status.textContent = 'Aguardando frame...';
+  resetSensemodelPanel();
+}
+
+function resetSensemodelPanel(){
+  sensemodelInFlight = false;
+  sensemodelPendingExact = null;
+  sensemodelLastKey = null;
+  sensemodelSeq++;
+  document.getElementById('sm-obstacle').textContent = '-';
+  document.getElementById('sm-deviation').textContent = '-';
+  document.getElementById('sm-obstacle-box').classList.remove('warn');
+  const status = document.getElementById('sm-status');
+  status.className = 'dronet-status';
+  status.textContent = 'Aguardando frame...';
+}
+
+function renderSensemodel(d){
+  const status = document.getElementById('sm-status');
+  if(!d.available){
+    status.className = 'dronet-status err';
+    status.textContent = d.error || 'SenseCV indisponível';
+    return;
+  }
+  document.getElementById('sm-obstacle').textContent = `${d.obstacle_label} ${d.obstacle_prob.toFixed(3)}`;
+  document.getElementById('sm-deviation').textContent = `${d.deviation_label} ${d.deviation_prob.toFixed(3)}`;
+  document.getElementById('sm-obstacle-box').classList.toggle('warn', d.obstacle_label === 'OBSTACLE');
+  status.className = 'dronet-status ok';
+  status.textContent = `${d.exact ? 'frame pausado' : '3 fps'}: f${d.frame} t=${d.time_s.toFixed(3)}s`;
+}
+
+async function requestSensemodel(exact=false){
+  if(!DATA) return;
+  const t = video.currentTime || 0;
+  const key = exact ? `exact:${Math.round(t * (DATA.fps || 30))}` : `bucket:${Math.floor(t * 3)}`;
+  if(key === sensemodelLastKey) return;
+  if(sensemodelInFlight){
+    sensemodelPendingExact = exact;
+    return;
+  }
+  sensemodelInFlight = true;
+  sensemodelLastKey = key;
+  const seq = sensemodelSeq;
+  try{
+    const r = await fetch(`/api/sensemodel/${currentIdx}?time=${encodeURIComponent(t)}&exact=${exact ? 1 : 0}`);
+    const d = await r.json();
+    if(seq === sensemodelSeq) renderSensemodel(d);
+  }catch(e){
+    if(seq === sensemodelSeq) renderSensemodel({available:false,error:'Erro ao consultar SenseCV'});
+  }finally{
+    sensemodelInFlight = false;
+    if(sensemodelPendingExact !== null && seq === sensemodelSeq){
+      const nextExact = sensemodelPendingExact;
+      sensemodelPendingExact = null;
+      requestSensemodel(nextExact);
+    }
+  }
 }
 
 function renderDronet(d){
@@ -890,6 +1019,7 @@ function renderDronet(d){
 }
 
 async function requestDronet(exact=false){
+  requestSensemodel(exact);
   if(!DATA) return;
   const t = video.currentTime || 0;
   const key = exact ? `exact:${Math.round(t * (DATA.fps || 30))}` : `bucket:${Math.floor(t * 3)}`;
@@ -1060,30 +1190,124 @@ const SUGGEST_TAGS={
   lateral:'desvio lateral',
 };
 
+const IMU_EVENT_LABELS = {desvio:'Desvio', reducao:'Redução', parada:'Parada'};
+const IMU_WINDOW_LABELS = {decisao:'Decisão', acao:'Ação', expandido:'Expandido'};
+
+function resetImuEvents(){
+  const q = document.getElementById('imu-quality');
+  const list = document.getElementById('imu-events');
+  if(q){ q.classList.add('hidden'); q.textContent=''; }
+  if(list){ list.classList.add('hidden'); list.innerHTML=''; }
+}
+
+function applyImuWindow(start, end){
+  cropStart = Math.max(0, start);
+  cropEnd = Math.max(cropStart + 0.05, end);
+  document.getElementById('crop-start-disp').textContent = fmtTime(cropStart);
+  document.getElementById('crop-end-disp').textContent = fmtTime(cropEnd);
+  video.currentTime = cropStart;
+  updateExportBtn(); drawTimeline();
+  Object.values(charts).forEach(c=>c.update('none'));
+  loadSsimVisualizer();
+}
+
+async function loadImuEvents(){
+  const btn = document.getElementById('btn-imu-events');
+  const q = document.getElementById('imu-quality');
+  const list = document.getElementById('imu-events');
+  const reqIdx = currentIdx;
+  btn.disabled = true; btn.textContent = 'Analisando…';
+  try {
+    const delta = document.getElementById('imu-delta').value;
+    const r = await fetch(`/api/imu-events/${reqIdx}?delta=${delta}`);
+    const d = await r.json();
+    if(reqIdx !== currentIdx) return;
+    if(!r.ok) throw new Error(d.error || 'falha ao detectar eventos IMU');
+    const quality = d.quality;
+    q.classList.remove('hidden');
+    const failed = quality.failed_checks.length ? ` · falhas: ${quality.failed_checks.join(', ')}` : '';
+    q.innerHTML = `Captura: <strong>${quality.verdict}</strong>` +
+      ` · acc ${quality.acc_rate.median_hz}Hz · cadência ${quality.cadence_hz ?? '—'}Hz${failed}`;
+    list.classList.remove('hidden');
+    if(!d.events.length){
+      list.innerHTML = '<div class="imu-event">Nenhum evento físico detectado pela IMU.</div>';
+      return;
+    }
+    list.innerHTML = d.events.map((e, i) => {
+      const dir = e.direction ? ` → ${e.direction}` : '';
+      const src = e.source ? ` · ${e.source === 'lateral_velocity' ? 'vel. lateral' : 'yaw'}` : '';
+      const reasons = e.confidence_reasons.length ? ` (${e.confidence_reasons.join('; ')})` : '';
+      const windows = Object.entries(e.windows).map(([name, w]) =>
+        `<button type="button" data-start="${w[0]}" data-end="${w[1]}">` +
+        `${IMU_WINDOW_LABELS[name]} ${w[0].toFixed(2)}–${w[1].toFixed(2)}s</button>`).join('');
+      return `<div class="imu-event">
+        <div class="imu-head-line">
+          <span class="imu-type">${IMU_EVENT_LABELS[e.type] || e.type}${dir}</span>
+          <span>T1 ${e.t1.toFixed(2)}s · T2 ${e.t2.toFixed(2)}s${src}</span>
+        </div>
+        <div>confiança: <span class="imu-conf-${e.confidence}">${e.confidence}</span>${reasons}</div>
+        <div class="imu-windows">${windows}</div>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.imu-windows button').forEach(b => {
+      b.addEventListener('click', () =>
+        applyImuWindow(Number(b.dataset.start), Number(b.dataset.end)));
+    });
+  } catch(e){
+    q.classList.remove('hidden');
+    q.textContent = `Eventos IMU: ${e.message}`;
+  } finally {
+    btn.disabled = false; btn.textContent = '⌁ Detectar';
+  }
+}
+
+const METRIC_DEFAULTS = {ssim: {{ '%.3f'|format(ssim_threshold) }}, dinov2: 0.980, lpips: 0.950, vif: 0.700};
+const METRIC_RANGE_MIN = {ssim: 0.900, dinov2: 0.900, lpips: 0.900, vif: 0.500};
+const METRIC_LABELS = {ssim: 'SSIM', dinov2: 'DINOv2', lpips: 'LPIPS', vif: 'VIF'};
+
+function getSsimMetric(){
+  const value = document.getElementById('ssim-metric')?.value;
+  return METRIC_DEFAULTS[value] != null ? value : 'ssim';
+}
+
+function metricLabel(metric){
+  return METRIC_LABELS[metric || getSsimMetric()] || 'SSIM';
+}
+
+function applyMetricChange(){
+  const metric = getSsimMetric();
+  const label = document.getElementById('ssim-threshold-label');
+  if(label) label.textContent = metricLabel(metric);
+  const range = document.getElementById('ssim-threshold-range');
+  if(range) range.min = METRIC_RANGE_MIN[metric].toFixed(3);
+  setSsimThreshold(METRIC_DEFAULTS[metric]);
+}
+
 function updateSsimSummary(ssim){
   const el = document.getElementById('ssim-summary');
   if(!el) return;
   if(!ssim){
-    el.textContent = 'SSIM: aguardando sugestao';
+    el.textContent = `${metricLabel()}: aguardando sugestao`;
     resetSsimVisualizer();
     resetSsimReviewLinks();
     return;
   }
+  const label = metricLabel(ssim.metric);
   if(ssim.error){
-    el.textContent = `SSIM: ${ssim.error}`;
+    el.textContent = `${label}: ${ssim.error}`;
     return;
   }
   const before = ssim.frames_before ?? 0;
   const after = ssim.frames_after ?? 0;
   const threshold = Number(ssim.ssim_threshold ?? 0).toFixed(3);
-  el.innerHTML = `SSIM: <strong>${before}</strong> frames -> <strong>${after}</strong> imagens (limiar ${threshold})`;
+  el.innerHTML = `${label}: <strong>${before}</strong> frames -> <strong>${after}</strong> imagens (limiar ${threshold})`;
 }
 
 function getSsimThreshold(){
   const input = document.getElementById('ssim-threshold');
   const value = Number(input?.value);
   if(Number.isFinite(value) && value > 0 && value < 1) return value;
-  return {{ '%.3f'|format(ssim_threshold) }};
+  return METRIC_DEFAULTS[getSsimMetric()];
 }
 
 function setSsimThreshold(value, source){
@@ -1139,8 +1363,9 @@ function renderSsimVisualizer(selection){
   const strip = document.getElementById('ssim-strip');
   if(!box || !strip) return;
   box.classList.remove('hidden');
+  const label = metricLabel(selection.metric);
   if(selection.error){
-    strip.innerHTML = `<div class="ssim-empty">SSIM: ${selection.error}</div>`;
+    strip.innerHTML = `<div class="ssim-empty">${label}: ${selection.error}</div>`;
     return;
   }
   const frames = selection.selected_frames || [];
@@ -1154,7 +1379,7 @@ function renderSsimVisualizer(selection){
       <img src="${f.image_url}" alt="Frame ${f.frame_id}" loading="lazy">
       <div class="ssim-meta">
         <strong>#${i + 1} · ${Number(f.time_s).toFixed(3)}s</strong>
-        frame ${f.frame_id} · SSIM ${score}
+        frame ${f.frame_id} · ${label} ${score}
       </div>
     </button>`;
   }).join('');
@@ -1175,12 +1400,13 @@ async function loadSsimVisualizer(){
   const btn = document.getElementById('btn-ssim-refresh');
   const strip = document.getElementById('ssim-strip');
   document.getElementById('ssim-visualizer').classList.remove('hidden');
-  strip.innerHTML = '<div class="ssim-empty">Carregando frames SSIM...</div>';
+  strip.innerHTML = `<div class="ssim-empty">Carregando frames ${metricLabel()}...</div>`;
   if(btn) btn.disabled = true;
   try {
     const qs = new URLSearchParams({
       start: String(cropStart),
       end: String(cropEnd),
+      metric: getSsimMetric(),
       threshold: getSsimThreshold().toFixed(3),
     });
     const r = await fetch(`/api/ssim/${currentIdx}?${qs.toString()}`);
@@ -1204,6 +1430,7 @@ async function runSuggest(mode, opts={}){
   try {
     const qs = new URLSearchParams({
       mode,
+      metric: getSsimMetric(),
       threshold: getSsimThreshold().toFixed(3),
     });
     const r=await fetch(`/api/suggest/${reqIdx}?${qs.toString()}`);
@@ -1240,6 +1467,8 @@ document.getElementById('btn-suggest').addEventListener('click',()=>runSuggest('
 document.getElementById('btn-suggest-walk').addEventListener('click',()=>runSuggest('walking'));
 document.getElementById('btn-suggest-lateral').addEventListener('click',()=>runSuggest('lateral'));
 document.getElementById('btn-ssim-refresh').addEventListener('click',()=>loadSsimVisualizer());
+document.getElementById('ssim-metric').addEventListener('change',()=>applyMetricChange());
+document.getElementById('btn-imu-events').addEventListener('click',()=>loadImuEvents());
 document.getElementById('ssim-threshold-range').addEventListener('input', e=>setSsimThreshold(e.target.value, 'range'));
 document.getElementById('ssim-threshold').addEventListener('input', e=>setSsimThreshold(e.target.value, 'number'));
 document.getElementById('ssim-threshold').addEventListener('change', e=>setSsimThreshold(e.target.value, 'number'));
@@ -1292,6 +1521,33 @@ new MutationObserver(() => {
            {attributes:true, attributeFilter:['disabled']});
 
 // ═══ Batch export ═══════════════════════════════
+function resetBatchExportLinks(){
+  const el = document.getElementById('batch-export-links');
+  if(!el) return;
+  el.classList.add('hidden');
+  el.innerHTML = '';
+}
+
+function showBatchExportLinks(result){
+  const el = document.getElementById('batch-export-links');
+  if(!el) return;
+  const links = [];
+  if(result.csv_url) links.push(['CSV', result.csv_url, null]);
+  if(result.review && result.review.url){
+    links.push(['Video unico - todos os frames', result.review.url, result.review.frames]);
+  }
+  if(result.review && result.review.error){
+    links.push([`Revisao indisponivel: ${result.review.error}`, null, null]);
+  }
+  el.innerHTML = links.map(([label, url, count]) => {
+    const text = `${label}${count == null ? '' : ` (${count})`}`;
+    return url
+      ? `<a href="${url}" target="_blank" rel="noopener">${text}</a>`
+      : `<span>${text}</span>`;
+  }).join('');
+  el.classList.toggle('hidden', !links.length);
+}
+
 async function runBatchExport(btn){
   const preset = btn.dataset.preset, mode = btn.dataset.mode;
   const original = btn.textContent;
@@ -1299,6 +1555,7 @@ async function runBatchExport(btn){
   const batchBtns = document.querySelectorAll('[data-preset]');
   batchBtns.forEach(b => b.disabled = true);
   btn.textContent = 'Exportando…';
+  resetBatchExportLinks();
   showToast(`Iniciando exportação ${preset}/${mode}…`,'ok');
   try {
     const r = await fetch('/api/batch-export',{
@@ -1307,6 +1564,7 @@ async function runBatchExport(btn){
     });
     const d = await r.json();
     if(d.status === 'ok'){
+      showBatchExportLinks(d);
       showToast(
         `✓ ${preset}/${mode}: ${d.ok} ok · ${d.skipped} pulados · ${d.failed} falhas`,
         'ok'
@@ -1322,6 +1580,84 @@ async function runBatchExport(btn){
 }
 document.querySelectorAll('[data-preset]').forEach(b =>
   b.addEventListener('click', () => runBatchExport(b))
+);
+
+function showManifestLinks(result){
+  const el = document.getElementById('manifest-export-links');
+  if(!el) return;
+  const links = [];
+  if(result && result.url){
+    links.push([`Vídeo único - todos os frames`, result.url, result.frames]);
+  } else if(result && result.error){
+    links.push([`Revisão indisponível: ${result.error}`, null, null]);
+  }
+  el.innerHTML = links.map(([label, url, count]) => {
+    const text = `${label}${count == null ? '' : ` (${count})`}`;
+    return url
+      ? `<a href="${url}" target="_blank" rel="noopener">${text}</a>`
+      : `<span>${text}</span>`;
+  }).join('');
+  el.classList.toggle('hidden', !links.length);
+}
+
+async function runManifestExport(btn){
+  const mode = btn.dataset.manifestMode;
+  const original = btn.textContent;
+  const manifestBtns = document.querySelectorAll('[data-manifest-mode]');
+  const progress = document.getElementById('manifest-progress');
+  manifestBtns.forEach(b => b.disabled = true);
+  btn.textContent = 'Planejando…';
+  document.getElementById('manifest-export-links').classList.add('hidden');
+  progress.className = 'dronet-status';
+  progress.textContent = 'Planejando fila…';
+  try{
+    const planRes = await fetch('/api/manifest-export',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mode, reset:true})
+    });
+    const plan = await planRes.json();
+    if(plan.status !== 'ok'){ throw new Error(plan.message || 'falha no planejamento'); }
+    const items = plan.items || [];
+    if(!items.length){
+      progress.textContent = 'Nenhum clipe com manifesto .xlsx encontrado.';
+      showToast('Fila de manifesto vazia','err');
+      return;
+    }
+    let ok = 0, skipped = 0;
+    for(let i = 0; i < items.length; i++){
+      const it = items[i];
+      progress.textContent = `Exportando ${i+1}/${items.length}: ${it.source_display}`;
+      const r = await fetch('/api/manifest-export/clip',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({clip_idx: it.clip_idx, mode})
+      });
+      const d = await r.json();
+      if(!r.ok || d.status === 'error'){
+        throw new Error(`Falhou em ${d.source_display || it.source_display}: ${d.message || r.status}`);
+      }
+      if(d.status === 'skipped') skipped++; else ok++;
+    }
+    progress.textContent = `Gerando vídeo de revisão… (${ok} ok · ${skipped} pulados)`;
+    const revRes = await fetch('/api/manifest-export/review',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mode})
+    });
+    const rev = await revRes.json();
+    showManifestLinks(rev);
+    progress.className = 'dronet-status ok';
+    progress.textContent = `✓ ${mode}: ${ok} ok · ${skipped} pulados · ${items.length} total`;
+    showToast(`✓ Manifesto ${mode}: ${ok} ok · ${skipped} pulados`,'ok');
+  }catch(e){
+    progress.className = 'dronet-status err';
+    progress.textContent = 'Erro: '+e.message;
+    showToast('Erro: '+e.message,'err');
+  }finally{
+    btn.textContent = original;
+    manifestBtns.forEach(b => b.disabled = false);
+  }
+}
+document.querySelectorAll('[data-manifest-mode]').forEach(b =>
+  b.addEventListener('click', () => runManifestExport(b))
 );
 
 async function uploadZipDataset(){
@@ -1416,7 +1752,7 @@ document.getElementById('export-btn').addEventListener('click', async ()=>{
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({clip_idx:currentIdx,start:cropStart,end:cropEnd,
                            name,occurrence,obs_pos:obsPos,response,desvio_dir:desvioDir,
-                           ssim_threshold:getSsimThreshold()})
+                           ssim_metric:getSsimMetric(),ssim_threshold:getSsimThreshold()})
     });
     const data=await resp.json();
     if(data.status==='ok'){

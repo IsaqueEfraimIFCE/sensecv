@@ -1,0 +1,4 @@
+# Optional extra for the /api/sensemodel live two-head .keras inference route.
+# Install into the same venv: pip install -r requirements-sensemodel.txt
+# The model file defaults to ./best_model.keras (override with SENSECV_MODEL_PATH).
+tensorflow-cpu>=2.16,<2.18

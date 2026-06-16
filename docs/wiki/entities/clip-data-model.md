@@ -1,4 +1,4 @@
----
+﻿---
 type: entity
 tags: [data-model, sensors, raw-source]
 code_refs: [app.py]

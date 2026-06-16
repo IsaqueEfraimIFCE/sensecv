@@ -1,5 +1,6 @@
 from flask import Flask, request, Response, render_template, jsonify, send_from_directory
 import json, os, re, subprocess, math, zipfile, shutil, sys
+from urllib.parse import quote
 from datetime import datetime
 from collections import OrderedDict
 import numpy as np
@@ -171,7 +172,13 @@ def find_clips():
         seen_roots.add(root_abs)
         roots.append((root, label, walking_only, recursive))
 
-    add_root(CLIPS_DIR, None, False, False)
+    # When CLIPS_DIR coincides with a recursive root (e.g. SENSECV_DATA_DIR
+    # deployments where /data/clips is also the uploads root), it must keep
+    # the recursive scan or nested uploaded datasets are never found.
+    if os.path.normcase(os.path.abspath(CLIPS_DIR)) in recursive_roots:
+        add_root(CLIPS_DIR, None, True, True)
+    else:
+        add_root(CLIPS_DIR, None, False, False)
     for r in EXTRA_CLIP_ROOTS:
         recursive = os.path.normcase(os.path.abspath(r)) in recursive_roots
         label = None if recursive else os.path.basename(os.path.normpath(r))
@@ -574,15 +581,103 @@ def _decode_gray_frame(cap, frame_no):
     return cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
 
 
+SELECTION_METRICS = ('ssim', 'dinov2', 'lpips', 'vif')
+
+
+class _Dinov2Backend:
+    """Cosine similarity between DINOv2 ViT-S/14 CLS embeddings."""
+
+    def __init__(self):
+        import torch
+        self.torch = torch
+        self.model = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14')
+        self.model.eval()
+        self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        self.std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+
+    def prepare(self, frame_bgr):
+        import cv2
+        rgb = cv2.cvtColor(cv2.resize(frame_bgr, (224, 224), interpolation=cv2.INTER_AREA),
+                           cv2.COLOR_BGR2RGB)
+        tensor = self.torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+        tensor = (tensor - self.mean) / self.std
+        with self.torch.no_grad():
+            emb = self.model(tensor.unsqueeze(0))[0]
+        return emb / emb.norm()
+
+    def similarity(self, prev, cur):
+        return float((prev * cur).sum())
+
+
+class _LpipsBackend:
+    """1 - LPIPS(AlexNet) perceptual distance."""
+
+    def __init__(self):
+        import torch
+        import lpips
+        self.torch = torch
+        self.net = lpips.LPIPS(net='alex', verbose=False)
+        self.net.eval()
+
+    def prepare(self, frame_bgr):
+        import cv2
+        rgb = cv2.cvtColor(cv2.resize(frame_bgr, (256, 144), interpolation=cv2.INTER_AREA),
+                           cv2.COLOR_BGR2RGB)
+        tensor = self.torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+        return (tensor * 2.0 - 1.0).unsqueeze(0)
+
+    def similarity(self, prev, cur):
+        with self.torch.no_grad():
+            return 1.0 - float(self.net(prev, cur))
+
+
+class _VifBackend:
+    """Pixel-domain Visual Information Fidelity on the SSIM-sized grayscale."""
+
+    def __init__(self):
+        from sewar.full_ref import vifp
+        self.vifp = vifp
+
+    def prepare(self, frame_bgr):
+        import cv2
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        return cv2.resize(gray, (160, 90), interpolation=cv2.INTER_AREA)
+
+    def similarity(self, prev, cur):
+        return float(self.vifp(prev, cur))
+
+
+_metric_backend_classes = {'dinov2': _Dinov2Backend, 'lpips': _LpipsBackend, 'vif': _VifBackend}
+_metric_backends = {}
+
+
+def _metric_backend(metric):
+    if metric not in _metric_backends:
+        _metric_backends[metric] = _metric_backend_classes[metric]()
+    return _metric_backends[metric]
+
+
+def _decode_color_frame(cap, frame_no):
+    try:
+        import cv2
+    except Exception as e:
+        raise RuntimeError(f'OpenCV indisponivel para selecao de frames: {e}')
+    cap.set(cv2.CAP_PROP_POS_FRAMES, int(frame_no))
+    ok, frame = cap.read()
+    return frame if ok else None
+
+
 def ssim_frame_selection(clip_idx, start_sec, end_sec,
                          threshold=SSIM_THRESHOLD,
-                         max_gap_sec=SSIM_MAX_GAP_SEC):
+                         max_gap_sec=SSIM_MAX_GAP_SEC,
+                         metric='ssim'):
     """Select visually distinct frames inside a proposed crop."""
     records = _frame_records_in_window(clip_idx, start_sec, end_sec)
     before = len(records)
     empty = {
         'frames_before': before,
         'frames_after': 0,
+        'metric': metric,
         'ssim_threshold': threshold,
         'ssim_max_gap_sec': max_gap_sec,
         'selected_frames': [],
@@ -598,6 +693,7 @@ def ssim_frame_selection(clip_idx, start_sec, end_sec,
         round(float(end_sec), 3),
         float(threshold),
         float(max_gap_sec),
+        metric,
     )
     if key in _ssim_selection_cache:
         _ssim_selection_cache.move_to_end(key)
@@ -616,20 +712,35 @@ def ssim_frame_selection(clip_idx, start_sec, end_sec,
         cap.release()
         return {**empty, 'error': 'invalid video fps for SSIM'}
 
+    try:
+        backend = None if metric == 'ssim' else _metric_backend(metric)
+    except Exception as e:
+        cap.release()
+        return {**empty, 'error': f'metric {metric} indisponivel: {e}'}
+
     selected = []
-    prev_gray = None
+    prev_rep = None
     prev_time = None
     last_record_i = len(records) - 1
     for record_i, (source_index, frame, time_s) in enumerate(records):
         frame_no = max(0, int(round(time_s * video_fps)))
-        gray = _decode_gray_frame(cap, frame_no)
-        if gray is None:
+        if backend is None:
+            rep = _decode_gray_frame(cap, frame_no)
+        else:
+            color = _decode_color_frame(cap, frame_no)
+            rep = None if color is None else backend.prepare(color)
+        if rep is None:
             continue
 
-        score = None if prev_gray is None else _ssim_gray(prev_gray, gray)
+        if prev_rep is None:
+            score = None
+        elif backend is None:
+            score = _ssim_gray(prev_rep, rep)
+        else:
+            score = backend.similarity(prev_rep, rep)
         forced_gap = prev_time is not None and (time_s - prev_time) >= max_gap_sec
         keep = (
-            prev_gray is None
+            prev_rep is None
             or record_i == last_record_i
             or score is None
             or score < threshold
@@ -642,13 +753,14 @@ def ssim_frame_selection(clip_idx, start_sec, end_sec,
                 'time_s': round(float(time_s), 3),
                 'ssim_prev': None if score is None else round(float(score), 5),
             })
-            prev_gray = gray
+            prev_rep = rep
             prev_time = time_s
     cap.release()
 
     result = {
         'frames_before': before,
         'frames_after': len(selected),
+        'metric': metric,
         'ssim_threshold': threshold,
         'ssim_max_gap_sec': max_gap_sec,
         'selected_frames': selected,
@@ -659,21 +771,40 @@ def ssim_frame_selection(clip_idx, start_sec, end_sec,
     return result
 
 
-def _coerce_ssim_threshold(value):
+DEFAULT_METRIC_THRESHOLDS = {
+    'ssim': SSIM_THRESHOLD,
+    'dinov2': 0.98,
+    'lpips': 0.95,
+    'vif': 0.70,
+}
+
+
+def _coerce_metric(value):
+    metric = (value or 'ssim').strip().lower()
+    if metric not in SELECTION_METRICS:
+        raise ValueError(f"metric must be one of: {', '.join(SELECTION_METRICS)}")
+    return metric
+
+
+def _coerce_ssim_threshold(value, metric='ssim'):
     if value is None or value == '':
-        return SSIM_THRESHOLD
+        return DEFAULT_METRIC_THRESHOLDS.get(metric, SSIM_THRESHOLD)
     threshold = float(value)
     if not 0.0 < threshold < 1.0:
         raise ValueError('SSIM threshold must be between 0 and 1')
     return threshold
 
 
-def _request_ssim_threshold():
-    return _coerce_ssim_threshold(request.args.get('threshold'))
+def _request_metric():
+    return _coerce_metric(request.args.get('metric'))
 
 
-def _body_ssim_threshold(body):
-    return _coerce_ssim_threshold((body or {}).get('ssim_threshold'))
+def _request_ssim_threshold(metric='ssim'):
+    return _coerce_ssim_threshold(request.args.get('threshold'), metric=metric)
+
+
+def _body_ssim_threshold(body, metric='ssim'):
+    return _coerce_ssim_threshold((body or {}).get('ssim_threshold'), metric=metric)
 
 
 def _selection_public(selection):
@@ -683,7 +814,7 @@ def _selection_public(selection):
     }
 
 
-def _suggestion_with_ssim(idx, suggestion, threshold=SSIM_THRESHOLD):
+def _suggestion_with_ssim(idx, suggestion, threshold=SSIM_THRESHOLD, metric='ssim'):
     if not suggestion.get('found'):
         return suggestion
     try:
@@ -692,6 +823,7 @@ def _suggestion_with_ssim(idx, suggestion, threshold=SSIM_THRESHOLD):
             float(suggestion['start']),
             float(suggestion['end']),
             threshold=threshold,
+            metric=metric,
         )
     except Exception as e:
         selection = {'frames_before': 0, 'frames_after': 0, 'error': str(e)}
@@ -841,8 +973,8 @@ def save_ssim_review_videos(clip_idx, start_sec, end_sec, selection, export_fold
     return counts
 
 
-def ssim_selection_payload(clip_idx, start_sec, end_sec, threshold=SSIM_THRESHOLD):
-    selection = ssim_frame_selection(clip_idx, start_sec, end_sec, threshold=threshold)
+def ssim_selection_payload(clip_idx, start_sec, end_sec, threshold=SSIM_THRESHOLD, metric='ssim'):
+    selection = ssim_frame_selection(clip_idx, start_sec, end_sec, threshold=threshold, metric=metric)
     payload = dict(selection)
     frames = []
     for frame in payload.get('selected_frames', []):
@@ -1868,6 +2000,374 @@ def suggest_lateral_deviation(idx, window_sec=1.0, dir_window_sec=2.0):
 
 # ─── Batch export ────────────────────────────────────────────────────────────
 
+# ─── IMU criteria: capture validation + event labeling ──────────────────────
+# Implements docs/wiki reference "criterios_imu_video_orientando" (uploaded
+# PDF): validate IMU capture quality, detect physical events (desvio,
+# reducao, parada) with T1/T2 from the IMU, and emit the three label windows
+# (acao = T1..T2, decisao = T1-Δ..T1, expandido = T1-Δ..T2+margem) plus a
+# confidence level (alta / baixa / descartar).
+
+IMU_EVENT_DELTA_SEC = float(os.environ.get('SENSECV_IMU_EVENT_DELTA_SEC', '1.0'))
+IMU_EVENT_PERSIST_SEC = float(os.environ.get('SENSECV_IMU_EVENT_PERSIST_SEC', '0.4'))
+IMU_STOP_MIN_SEC = float(os.environ.get('SENSECV_IMU_STOP_MIN_SEC', '1.0'))
+IMU_EXPANDED_MARGIN_SEC = float(os.environ.get('SENSECV_IMU_EXPANDED_MARGIN_SEC', '0.3'))
+IMU_DEVIATION_YAW_DEG_S = float(os.environ.get('SENSECV_IMU_DEVIATION_YAW_DEG_S', '25.0'))
+IMU_DEVIATION_LAT_VEL = float(os.environ.get('SENSECV_IMU_DEVIATION_LAT_VEL', '0.035'))
+IMU_DEVIATION_MERGE_GAP_SEC = float(os.environ.get('SENSECV_IMU_DEVIATION_MERGE_GAP_SEC', '1.5'))
+IMU_WALK_STD = 0.5    # m/s², same gait threshold as _orientation_walking_masks
+IMU_STOP_STD = 0.25   # m/s², below this the user is considered stopped
+IMU_DECEL_RATIO = 0.6  # energy below this fraction of the recent walking baseline
+
+
+def _mask_runs(mask):
+    """Yield (i0, i1) inclusive index runs where mask is True."""
+    runs = []
+    start = None
+    for i, value in enumerate(mask):
+        if value and start is None:
+            start = i
+        elif not value and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(mask) - 1))
+    return runs
+
+
+def _stream_rate_stats(times_usec):
+    """Sampling-rate health for one sensor stream (PDF section 1)."""
+    t = np.asarray(times_usec, dtype=np.float64)
+    if len(t) < 3:
+        return {'samples': len(t), 'median_hz': 0.0, 'min_hz': 0.0,
+                'gap_count': 0, 'jitter_ratio': 0.0}
+    dt = np.diff(t) / 1e6
+    dt = dt[dt > 0]
+    if len(dt) == 0:
+        return {'samples': len(t), 'median_hz': 0.0, 'min_hz': 0.0,
+                'gap_count': 0, 'jitter_ratio': 0.0}
+    median_dt = float(np.median(dt))
+    return {
+        'samples': int(len(t)),
+        'median_hz': round(1.0 / median_dt, 2),
+        'min_hz': round(1.0 / float(dt.max()), 2),
+        'gap_count': int(np.count_nonzero(dt > 3.0 * median_dt)),
+        'jitter_ratio': round(float(dt.std()) / median_dt, 4),
+    }
+
+
+def _saturation_fraction(values, floor):
+    """Fraction of samples pinned near the absolute max (clipping evidence)."""
+    v = np.abs(np.asarray(values, dtype=np.float64))
+    peak = float(v.max()) if len(v) else 0.0
+    if peak < floor:
+        return 0.0
+    return float(np.count_nonzero(v >= 0.98 * peak)) / max(1, len(v))
+
+
+def _dominant_cadence(amag, fps):
+    """Step rate (Hz) and autocorrelation strength of the gait periodicity."""
+    x = np.asarray(amag, dtype=np.float64)
+    if len(x) < int(fps * 3):
+        return None, 0.0
+    x = x - x.mean()
+    ac = np.correlate(x, x, 'full')[len(x) - 1:]
+    if ac[0] <= 1e-9:
+        return None, 0.0
+    ac = ac / ac[0]
+    lo = max(1, int(round(fps * 0.3)))
+    hi = min(len(ac) - 1, int(round(fps * 1.2)))
+    if hi <= lo:
+        return None, 0.0
+    lag = lo + int(np.argmax(ac[lo:hi]))
+    return round(fps / lag, 2), round(float(ac[lag]), 3)
+
+
+def _imu_event_series(idx):
+    """Frame-aligned signals shared by quality report and event detection."""
+    folder = clip_path(idx)
+    frames = load_json(folder, 'frames.json')['frames']
+    acc = load_json(folder, 'accelerations.json')['accelerations']
+    rot = load_json(folder, 'rotations.json')['rotations']
+
+    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
+    at = np.array([a['time_usec'] for a in acc], dtype=np.float64)
+    av = np.array([[a['x'], a['y'], a['z']] for a in acc], dtype=np.float64)
+    rt = np.array([r['time_usec'] for r in rot], dtype=np.float64)
+    rv = np.array([[r['x'], r['y'], r['z']] for r in rot], dtype=np.float64)
+    if len(ft) < 2 or len(av) == 0:
+        raise ValueError('sensor data is empty or too short')
+
+    secs = (ft - ft[0]) / 1e6
+    fps = float(1e6 / np.median(np.diff(ft)))
+
+    a_at_f = np.array(interp_at_times(at, av, ft.tolist()), dtype=np.float64)
+    amag = np.linalg.norm(a_at_f, axis=1)
+
+    W = min(len(ft), max(1, int(fps * 1.0)))
+    kernel = np.ones(W) / W
+    mean_mag = np.convolve(amag, kernel, mode='same')
+    var_mag = np.convolve((amag - mean_mag) ** 2, kernel, mode='same')
+    std_mag = np.sqrt(np.maximum(var_mag, 0.0))
+
+    # Gravity-aligned body axes, independent of how the phone is held
+    # (em pe / deitado): up = smoothed accel direction, forward = camera -z
+    # projected to the horizontal plane, left = up x forward.
+    g_smooth_w = max(1, int(round(fps * 0.7)))
+    g_dir = np.column_stack([
+        _centered_rolling_mean(a_at_f[:, i], g_smooth_w) for i in range(3)
+    ])
+    g_dir = g_dir / np.maximum(np.linalg.norm(g_dir, axis=1)[:, None], 1e-6)
+    minus_z = np.zeros_like(g_dir)
+    minus_z[:, 2] = -1.0
+    fwd = np.cross(g_dir, np.cross(minus_z, g_dir))
+    fwd = fwd / np.maximum(np.linalg.norm(fwd, axis=1)[:, None], 1e-6)
+    left = np.cross(g_dir, fwd)
+
+    # Yaw rate around gravity (PDF 2.3: "velocidade angular em yaw").
+    yaw_deg_s = np.zeros(len(ft))
+    if len(rv):
+        r_at_f = np.array(interp_at_times(rt, rv, ft.tolist()), dtype=np.float64)
+        yaw_rad_s = np.einsum('ij,ij->i', r_at_f, g_dir)
+        smooth_w = max(1, int(round(fps * 0.2)))
+        yaw_deg_s = np.degrees(np.array(_centered_rolling_mean(yaw_rad_s, smooth_w)))
+
+    # Lateral velocity (PDF 2.3: "aceleracao lateral persistente"), integrated
+    # with rolling-mean drift removal. On gimbal-stabilized captures the gyro
+    # barely registers the deviation, but the body still translates sideways;
+    # validated at 27/32 correct directions on the IFCE manifest clips.
+    lin = a_at_f - g_dir * np.linalg.norm(
+        np.column_stack([_centered_rolling_mean(a_at_f[:, i], g_smooth_w) for i in range(3)]),
+        axis=1)[:, None]
+    lat_acc = np.einsum('ij,ij->i', lin, left)
+    lat_vel = np.cumsum(lat_acc) / fps
+    drift_w = max(1, int(round(fps * 2.5)))
+    lat_vel = lat_vel - np.array(_centered_rolling_mean(lat_vel, drift_w))
+    lat_vel = np.array(_centered_rolling_mean(lat_vel, max(1, int(round(fps * 0.6)))))
+
+    return {
+        'secs': secs, 'fps': fps,
+        'acc_times': at, 'acc_values': av,
+        'rot_times': rt, 'rot_values': rv,
+        'amag': amag, 'std_mag': std_mag,
+        'yaw_deg_s': yaw_deg_s, 'lat_vel': lat_vel,
+        'duration_s': float(secs[-1]),
+    }
+
+
+def imu_quality_report(idx):
+    """PDF section 1: capture validation checklist with a verdict."""
+    series = _imu_event_series(idx)
+    acc_rate = _stream_rate_stats(series['acc_times'])
+    rot_rate = _stream_rate_stats(series['rot_times'])
+
+    acc_sat = max(_saturation_fraction(series['acc_values'][:, i], 35.0) for i in range(3))
+    rot_sat = (max(_saturation_fraction(series['rot_values'][:, i], 15.0) for i in range(3))
+               if len(series['rot_values']) else 0.0)
+
+    std_mag = series['std_mag']
+    walking = std_mag > IMU_WALK_STD
+    stopped = std_mag < IMU_STOP_STD
+    walking_frac = float(np.mean(walking))
+
+    cadence_hz, periodicity = None, 0.0
+    runs = _mask_runs(walking.tolist())
+    if runs:
+        i0, i1 = max(runs, key=lambda r: r[1] - r[0])
+        cadence_hz, periodicity = _dominant_cadence(series['amag'][i0:i1 + 1], series['fps'])
+    if cadence_hz is None:
+        # Short clips rarely have a single >=3 s walking run; the clip-level
+        # autocorrelation still recovers the step periodicity.
+        cadence_hz, periodicity = _dominant_cadence(series['amag'], series['fps'])
+
+    p10, p90 = (np.percentile(std_mag, 10), np.percentile(std_mag, 90)) if len(std_mag) else (0, 0)
+    energy_range = float(p90 / max(p10, 1e-6))
+
+    checks = {
+        'taxa_amostragem_100hz': acc_rate['median_hz'] >= 100.0,
+        'sem_lacunas': acc_rate['gap_count'] == 0,
+        'jitter_baixo': acc_rate['jitter_ratio'] < 0.5,
+        'sem_saturacao': acc_sat < 0.01 and rot_sat < 0.01,
+        'marcha_periodica': periodicity >= 0.3 and cadence_hz is not None,
+        'tem_caminhada': walking_frac > 0.2,
+        'estados_distinguiveis': energy_range > 2.0 or float(np.mean(stopped)) > 0.05,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    critical = {'sem_saturacao', 'tem_caminhada', 'marcha_periodica'}
+    if any(name in critical for name in failed):
+        verdict = 'rejeitar'
+    elif failed:
+        verdict = 'baixa_confianca'
+    else:
+        verdict = 'aceitar'
+
+    return {
+        'verdict': verdict,
+        'failed_checks': failed,
+        'checks': checks,
+        'acc_rate': acc_rate,
+        'rot_rate': rot_rate,
+        'acc_saturation_frac': round(acc_sat, 4),
+        'rot_saturation_frac': round(rot_sat, 4),
+        'walking_fraction': round(walking_frac, 3),
+        'cadence_hz': cadence_hz,
+        'gait_periodicity': periodicity,
+        'energy_dynamic_range': round(energy_range, 2),
+        'duration_s': round(series['duration_s'], 3),
+    }
+
+
+def _event_windows(t1, t2, delta, duration):
+    clamp = lambda v: round(min(max(0.0, v), duration), 3)
+    return {
+        'acao': [clamp(t1), clamp(t2)],
+        'decisao': [clamp(t1 - delta), clamp(t1)],
+        'expandido': [clamp(t1 - delta), clamp(t2 + IMU_EXPANDED_MARGIN_SEC)],
+    }
+
+
+def detect_imu_events(idx, delta=None):
+    """PDF sections 2-5: T1/T2 events with label windows and confidence."""
+    delta = IMU_EVENT_DELTA_SEC if delta is None else float(delta)
+    series = _imu_event_series(idx)
+    quality = imu_quality_report(idx)
+    secs, fps = series['secs'], series['fps']
+    duration = series['duration_s']
+    std_mag, yaw_deg_s = series['std_mag'], series['yaw_deg_s']
+    persist_n = max(1, int(round(fps * IMU_EVENT_PERSIST_SEC)))
+
+    events = []
+
+    # Desvio lateral (2.3): a persistent excursion marks the turn away; the
+    # deviation is "turn away, then turn back", so consecutive excursions of
+    # opposite sign within a short gap merge into one event whose direction is
+    # the first excursion and whose T2 is the return to the trajectory.
+    # Signal choice: yaw rate when the capture actually rotates (handheld);
+    # lateral velocity otherwise (gimbal-stabilized captures barely yaw).
+    yaw_strength = float(np.max(np.abs(yaw_deg_s))) / IMU_DEVIATION_YAW_DEG_S if len(yaw_deg_s) else 0.0
+    if yaw_strength >= 1.0:
+        dev_signal, dev_threshold, dev_source = yaw_deg_s, IMU_DEVIATION_YAW_DEG_S, 'yaw'
+    else:
+        dev_signal, dev_threshold, dev_source = series['lat_vel'], IMU_DEVIATION_LAT_VEL, 'lateral_velocity'
+
+    turns = []
+    # Persistence is tested at 60% of the threshold (the excursion plateau),
+    # but the peak must reach the full threshold: rejects single spikes (2.3)
+    # without demanding the peak itself lasts the whole persistence window.
+    dev_mask = np.abs(dev_signal) > 0.6 * dev_threshold
+    for i0, i1 in _mask_runs(dev_mask.tolist()):
+        if i1 - i0 + 1 < persist_n:
+            continue  # single isolated peaks are explicitly not T1
+        segment = dev_signal[i0:i1 + 1]
+        if float(np.max(np.abs(segment))) < dev_threshold:
+            continue
+        turns.append({
+            'i0': i0, 'i1': i1,
+            'sign': 1.0 if float(np.mean(segment)) > 0 else -1.0,
+            'peak': float(np.max(np.abs(segment))),
+        })
+    merged = []
+    for turn in turns:
+        prev = merged[-1] if merged else None
+        if (prev is not None
+                and turn['sign'] != prev['sign']
+                and secs[turn['i0']] - secs[prev['i1']] <= IMU_DEVIATION_MERGE_GAP_SEC
+                and not prev.get('returned')):
+            if turn['peak'] > prev['peak']:
+                prev['peak'] = turn['peak']
+                prev['peak_sign'] = turn['sign']
+            prev['i1'] = turn['i1']
+            prev['returned'] = True
+            continue
+        item = dict(turn)
+        item['peak_sign'] = item['sign']
+        merged.append(item)
+    for turn in merged:
+        # Positive = leftward for both signals (right-hand rule around the
+        # gravity-aligned up vector; left = up x forward). The strongest
+        # excursion of the out-and-back pair carries the deviation direction
+        # (validated against the IFCE manifest).
+        direction = 'esquerda' if turn['peak_sign'] > 0 else 'direita'
+        events.append({
+            'type': 'desvio', 'direction': direction,
+            'source': dev_source,
+            't1': float(secs[turn['i0']]), 't2': float(secs[turn['i1']]),
+            'peak': round(turn['peak'], 3),
+            'strength': turn['peak'] / dev_threshold,
+        })
+
+    # Parada (3.2): gait energy at standstill level for >= IMU_STOP_MIN_SEC.
+    stop_mask = std_mag < IMU_STOP_STD
+    stop_runs = []
+    for i0, i1 in _mask_runs(stop_mask.tolist()):
+        if secs[i1] - secs[i0] < IMU_STOP_MIN_SEC:
+            continue
+        stop_runs.append((i0, i1))
+        events.append({
+            'type': 'parada', 'direction': None,
+            't1': float(secs[i0]), 't2': float(secs[i1]),
+            'peak': round(float(np.min(std_mag[i0:i1 + 1])), 3),
+            'strength': IMU_STOP_STD / max(float(np.min(std_mag[i0:i1 + 1])), 1e-6),
+        })
+
+    # Reducao (3.1): walking energy falls persistently below a fraction of the
+    # recent walking baseline without reaching standstill.
+    baseline = np.array(_centered_rolling_mean(std_mag, max(1, int(round(fps * 3.0)))))
+    decel_mask = (std_mag > IMU_STOP_STD) & (std_mag < IMU_DECEL_RATIO * baseline)
+    for i0, i1 in _mask_runs(decel_mask.tolist()):
+        if i1 - i0 + 1 < persist_n:
+            continue
+        in_stop = any(s0 <= i0 <= s1 for s0, s1 in stop_runs)
+        if in_stop:
+            continue
+        ratio = float(np.min(std_mag[i0:i1 + 1] / np.maximum(baseline[i0:i1 + 1], 1e-6)))
+        events.append({
+            'type': 'reducao', 'direction': None,
+            't1': float(secs[i0]), 't2': float(secs[i1]),
+            'peak': round(ratio, 3),
+            'strength': IMU_DECEL_RATIO / max(ratio, 1e-6),
+        })
+
+    events.sort(key=lambda e: e['t1'])
+
+    # Confidence (PDF 1.2 / 5 / 5.1): ambiguity between simultaneous events,
+    # weak signal margins, and the capture verdict all lower confidence.
+    for i, event in enumerate(events):
+        reasons = []
+        overlapping = [
+            other for j, other in enumerate(events) if j != i
+            and other['type'] != event['type']
+            and not (other['t2'] < event['t1'] - 0.5 or other['t1'] > event['t2'] + 0.5)
+        ]
+        # A decel run immediately before a stop is a natural pair, not noise.
+        natural_pair = (
+            event['type'] in ('reducao', 'parada')
+            and all(o['type'] in ('reducao', 'parada') for o in overlapping)
+        )
+        if quality['verdict'] == 'rejeitar':
+            confidence = 'descartar'
+            reasons.append('captura IMU rejeitada')
+        elif overlapping and not natural_pair:
+            confidence = 'baixa'
+            reasons.append('eventos sobrepostos/ambiguos')
+        elif quality['verdict'] == 'baixa_confianca' or event['strength'] < 1.5:
+            confidence = 'baixa'
+            if quality['verdict'] == 'baixa_confianca':
+                reasons.append('qualidade de captura limitada')
+            if event['strength'] < 1.5:
+                reasons.append('margem de sinal fraca')
+        else:
+            confidence = 'alta'
+        event['confidence'] = confidence
+        event['confidence_reasons'] = reasons
+        event['windows'] = _event_windows(event['t1'], event['t2'], delta, duration)
+        event['t1'] = round(event['t1'], 3)
+        event['t2'] = round(event['t2'], 3)
+        event['strength'] = round(event['strength'], 2)
+
+    return {'delta': delta, 'quality': quality, 'events': events,
+            'duration_s': round(duration, 3)}
+
+
 def _safe_clip_name(display):
     return display.replace('/', '_').replace('\\', '_')
 
@@ -1896,6 +2396,79 @@ def _ffmpeg_cut(src_video, start, end, out_video):
         raise RuntimeError(r.stderr[-500:])
 
 
+def _derived_file_url(path):
+    rel = os.path.relpath(os.path.abspath(path), os.path.abspath(DERIVED_DIR))
+    return '/derived-file/' + quote(rel.replace(os.sep, '/'))
+
+
+def _write_export_review_video(video_paths, out_video, fps=SSIM_REVIEW_FPS):
+    """Write one MP4 containing every frame from the exported videos."""
+    try:
+        import cv2
+    except Exception as e:
+        raise RuntimeError(f'OpenCV indisponivel para video de revisao: {e}')
+    try:
+        import imageio_ffmpeg
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        raise RuntimeError(f'ffmpeg indisponivel para video de revisao: {e}')
+
+    video_paths = [p for p in video_paths if p and os.path.isfile(p)]
+    if not video_paths:
+        return 0
+
+    first = cv2.VideoCapture(video_paths[0])
+    if not first.isOpened():
+        raise RuntimeError('primeiro video exportado nao pode ser lido')
+    width, height = _review_frame_size(
+        first.get(cv2.CAP_PROP_FRAME_WIDTH),
+        first.get(cv2.CAP_PROP_FRAME_HEIGHT),
+    )
+    first.release()
+
+    os.makedirs(os.path.dirname(out_video), exist_ok=True)
+    cmd = [
+        ffmpeg, '-y',
+        '-f', 'rawvideo',
+        '-vcodec', 'rawvideo',
+        '-pix_fmt', 'rgb24',
+        '-s', f'{width}x{height}',
+        '-r', f'{fps}',
+        '-i', '-',
+        '-an',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        out_video,
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    written = 0
+    try:
+        for path in video_paths:
+            cap = cv2.VideoCapture(path)
+            if not cap.isOpened():
+                continue
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if frame.shape[1] != width or frame.shape[0] != height:
+                    frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+                proc.stdin.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes())
+                written += 1
+            cap.release()
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+    stderr = proc.stderr.read().decode('utf-8', errors='replace')
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(stderr[-500:])
+    return written
+
+
 def export_set(indices, out_dir, mode='walking', verbose=False):
     """Batch-export an auto-suggested cut per clip into `out_dir`.
 
@@ -1907,6 +2480,7 @@ def export_set(indices, out_dir, mode='walking', verbose=False):
     os.makedirs(out_dir, exist_ok=True)
     csv_path = os.path.join(out_dir, 'sources.csv')
     rows = []
+    exported_videos = []
     n_ok = n_skip = n_fail = 0
 
     for idx in indices:
@@ -1979,6 +2553,7 @@ def export_set(indices, out_dir, mode='walking', verbose=False):
         else:
             row['status'] = 'ok'
 
+        exported_videos.append(out_video)
         rows.append(row); n_ok += 1
         if verbose: print(f'  [ok]   {display}: {start:.2f}-{end:.2f}s')
 
@@ -1990,11 +2565,28 @@ def export_set(indices, out_dir, mode='walking', verbose=False):
             'ssim_threshold', 'ssim_status', 'status'])
         w.writeheader(); w.writerows(rows)
 
+    review = None
+    if exported_videos:
+        review_path = os.path.join(out_dir, 'review_all_frames.mp4')
+        try:
+            frame_count = _write_export_review_video(exported_videos, review_path)
+            review = {
+                'path': review_path,
+                'url': _derived_file_url(review_path),
+                'frames': frame_count,
+                'videos': len(exported_videos),
+            }
+        except Exception as e:
+            review = {'error': str(e), 'videos': len(exported_videos)}
+
     return {'ok': n_ok, 'skipped': n_skip, 'failed': n_fail,
-            'total': len(indices), 'out_dir': out_dir, 'csv_path': csv_path}
+            'total': len(indices), 'out_dir': out_dir, 'csv_path': csv_path,
+            'csv_url': _derived_file_url(csv_path), 'review': review}
 
 
 def _preset_filter(preset):
+    if preset == 'all':
+        return lambda name: not name.startswith('exports/')
     if preset == 'sensecv':
         return lambda name: name in WALKING_ONLY and not name.startswith('exports/')
     if preset == 'supermarket':
@@ -2003,12 +2595,346 @@ def _preset_filter(preset):
 
 
 def _preset_out_dir(preset, mode):
-    base = {'sensecv': 'SenseCV', 'supermarket': 'Supermercado'}[preset]
+    base = {'all': 'Todos os videos', 'sensecv': 'SenseCV', 'supermarket': 'Supermercado'}[preset]
     suffix = '' if mode == 'walking' else ' (lateral)'
     return os.path.join(DERIVED_DIR, f'{base} dataset{suffix}')
 
 
-PRESETS = ('sensecv', 'supermarket')
+PRESETS = ('all', 'sensecv', 'supermarket')
+
+
+# ─── SenseCV two-head keras model (live inference) ───────────────────────────
+# Mirrors the lazy-loaded DroNet runtime: the local two-head .keras model is
+# loaded on first use and degrades gracefully (controlled in-payload error)
+# when TensorFlow or the model file is unavailable. Heads are matched by output
+# width: 2 classes -> obstacle (NONE/OBSTACLE), 3 classes -> deviation
+# (LEFT/RIGHT/NONE).
+SENSECV_MODEL_PATH = os.environ.get(
+    'SENSECV_MODEL_PATH', os.path.join(PROJECT_ROOT, 'best_model.keras'))
+SENSECV_OBSTACLE_LABELS = ['NONE', 'OBSTACLE']
+SENSECV_DEVIATION_LABELS = ['LEFT', 'RIGHT', 'NONE']
+_sensemodel_runtime = {'model': None, 'error': None}
+_sensemodel_cache = OrderedDict()
+
+
+def _load_sensemodel_runtime():
+    if _sensemodel_runtime['model'] is not None or _sensemodel_runtime['error'] is not None:
+        return _sensemodel_runtime
+    try:
+        if not os.path.isfile(SENSECV_MODEL_PATH):
+            raise FileNotFoundError(f'modelo .keras nao encontrado: {SENSECV_MODEL_PATH}')
+        os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
+        from tensorflow import keras
+        _sensemodel_runtime['model'] = keras.models.load_model(SENSECV_MODEL_PATH, compile=False)
+    except Exception as e:
+        _sensemodel_runtime['error'] = str(e)
+    return _sensemodel_runtime
+
+
+def _sensemodel_input_shape(model):
+    shape = model.inputs[0].shape
+    dims = [int(d) for d in shape[1:] if d is not None]
+    if len(dims) == 3:
+        h, w, c = dims
+    elif len(dims) == 2:
+        h, w, c = dims[0], dims[1], 1
+    else:
+        h, w, c = 224, 224, 3
+    return h, w, c
+
+
+def _label_for(vec):
+    vec = list(vec)
+    i = int(np.argmax(vec)) if vec else 0
+    labels = SENSECV_OBSTACLE_LABELS if len(vec) == 2 else SENSECV_DEVIATION_LABELS
+    label = labels[i] if i < len(labels) else str(i)
+    prob = float(vec[i]) if vec else 0.0
+    return label, prob
+
+
+def sensemodel_frame_classification(idx, time_s, exact=False):
+    runtime = _load_sensemodel_runtime()
+    if runtime['error']:
+        return {'available': False, 'error': runtime['error']}
+    model = runtime['model']
+
+    try:
+        import cv2
+    except Exception as e:
+        return {'available': False, 'error': f'OpenCV indisponivel: {e}'}
+
+    video_path = clip_video_path(idx)
+    mtime = os.path.getmtime(video_path)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return {'available': False, 'error': 'video unreadable'}
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if fps <= 0 or frame_count <= 0:
+        cap.release()
+        return {'available': False, 'error': 'invalid video metadata'}
+
+    duration = frame_count / fps
+    sample_time = max(0.0, min(float(time_s or 0.0), duration))
+    if not exact:
+        sample_time = math.floor(sample_time * DRONET_SAMPLE_FPS) / DRONET_SAMPLE_FPS
+    frame_idx = min(frame_count - 1, max(0, int(round(sample_time * fps))))
+
+    key = (CLIPS[idx], mtime, frame_idx)
+    if key in _sensemodel_cache:
+        _sensemodel_cache.move_to_end(key)
+        cap.release()
+        return _sensemodel_cache[key]
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        return {'available': False, 'error': 'frame decode failed', 'frame': frame_idx}
+
+    h, w, c = _sensemodel_input_shape(model)
+    img = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
+    if c == 1:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[..., None]
+    else:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # The model embeds a MobileNetV2 Rescaling layer (0-255 -> [-1,1]), so feed
+    # raw pixel values here; pre-dividing by 255 collapses the input range and
+    # makes every frame look identical (near-constant predictions).
+    batch = img.astype('float32')[None, ...]
+
+    preds = model.predict(batch, verbose=0)
+    if not isinstance(preds, (list, tuple)):
+        preds = [preds]
+    vectors = [np.asarray(p).reshape(-1).tolist() for p in preds]
+
+    obstacle_vec = next((v for v in vectors if len(v) == 2), vectors[0])
+    deviation_vec = next((v for v in vectors if len(v) == 3), vectors[-1])
+    obstacle_label, obstacle_prob = _label_for(obstacle_vec)
+    deviation_label, deviation_prob = _label_for(deviation_vec)
+
+    result = {
+        'available': True,
+        'clip': CLIPS[idx],
+        'frame': frame_idx,
+        'time_s': round(frame_idx / fps, 4),
+        'requested_time_s': round(float(time_s or 0.0), 4),
+        'sample_fps': DRONET_SAMPLE_FPS,
+        'exact': bool(exact),
+        'source_fps': round(fps, 4),
+        'obstacle_label': obstacle_label,
+        'obstacle_prob': obstacle_prob,
+        'deviation_label': deviation_label,
+        'deviation_prob': deviation_prob,
+        'obstacle_probs': obstacle_vec,
+        'deviation_probs': deviation_vec,
+    }
+    _sensemodel_cache[key] = result
+    if len(_sensemodel_cache) > 64:
+        _sensemodel_cache.popitem(last=False)
+    return result
+
+
+# ─── Uploaded-dataset manifest export ────────────────────────────────────────
+# Each uploaded dataset (group) may ship an .xlsx manifest describing every clip
+# (ID, LOCAL, DESCRICAO, POSICAO CELULAR, LOCAL OBSTACULO, ALTURA OBSTACULO; see
+# [[sensecv-02062026-ifce-clip-manifest]]). The manifest export plans a queue of
+# every clip whose dataset has a manifest entry, cuts each one with the same
+# auto-suggested window as the viewer, and writes per-group outputs under
+# data/derived/manifest_exports/<group>/<mode>/ without touching exports/ or
+# history.json.
+MANIFEST_EXPORTS_DIR = os.path.join(DERIVED_DIR, 'manifest_exports')
+_manifest_cache = {}
+
+
+def _norm_manifest_id(value):
+    s = str(value).strip()
+    try:
+        return str(int(float(s)))
+    except (ValueError, TypeError):
+        return s.lower()
+
+
+def _clip_dataset_root(idx):
+    """Top-level uploaded-dataset folder containing this clip, or None."""
+    clip_dir = os.path.abspath(clip_path(idx))
+    uploads = os.path.abspath(UPLOADS_DIR)
+    if os.path.normcase(clip_dir).startswith(os.path.normcase(uploads) + os.sep):
+        rel = os.path.relpath(clip_dir, uploads)
+        return os.path.join(uploads, rel.split(os.sep)[0])
+    return None
+
+
+def _find_dataset_manifest(dataset_root):
+    if not dataset_root or not os.path.isdir(dataset_root):
+        return None
+    for base, _dirs, files in os.walk(dataset_root):
+        for fn in files:
+            if fn.lower().endswith('.xlsx') and not fn.startswith('~$'):
+                return os.path.join(base, fn)
+    return None
+
+
+def _load_manifest_rows(xlsx_path):
+    """Return {normalized_id: {COLUMN: value}} from the first sheet with an ID column."""
+    if xlsx_path in _manifest_cache:
+        return _manifest_cache[xlsx_path]
+    rows = {}
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+        ws = wb.active
+        header = None
+        for raw in ws.iter_rows(values_only=True):
+            cells = ['' if v is None else str(v).strip() for v in raw]
+            if header is None:
+                if any(c.strip().upper() == 'ID' for c in cells):
+                    header = [c.strip().upper() for c in cells]
+                continue
+            record = {header[i]: cells[i] for i in range(min(len(header), len(cells)))}
+            cid = record.get('ID', '').strip()
+            if cid:
+                rows[_norm_manifest_id(cid)] = record
+        wb.close()
+    except Exception:
+        return {}
+    _manifest_cache[xlsx_path] = rows
+    return rows
+
+
+def _manifest_label(manifest_id, record):
+    parts = [manifest_id]
+    for col in ('DESCRICAO', 'POSICAO CELULAR', 'LOCAL OBSTACULO', 'ALTURA OBSTACULO'):
+        v = (record.get(col) or '').strip()
+        if v:
+            parts.append(v)
+    return ' | '.join(parts)
+
+
+def plan_manifest_export(mode='lateral'):
+    """Queue of every uploaded clip whose dataset has a matching manifest row."""
+    items = []
+    for idx, display in enumerate(CLIPS):
+        if display.startswith('exports/'):
+            continue
+        manifest = _find_dataset_manifest(_clip_dataset_root(idx))
+        if not manifest:
+            continue
+        rows = _load_manifest_rows(manifest)
+        clip_name = os.path.basename(os.path.normpath(clip_path(idx)))
+        record = rows.get(_norm_manifest_id(clip_name))
+        if record is None:
+            continue
+        items.append({
+            'clip_idx': idx,
+            'source_display': display,
+            'group': CLIP_GROUPS.get(display, ''),
+            'manifest_id': clip_name,
+            'label': _manifest_label(clip_name, record),
+        })
+    return items
+
+
+def _manifest_group_dir(group, mode):
+    return os.path.join(MANIFEST_EXPORTS_DIR, _safe_clip_name(group or 'sem_grupo'), mode)
+
+
+def _manifest_clip_out_dir(idx, mode):
+    group = CLIP_GROUPS.get(CLIPS[idx], 'sem_grupo')
+    clip_name = os.path.basename(os.path.normpath(clip_path(idx)))
+    return os.path.join(_manifest_group_dir(group, mode), clip_name)
+
+
+def export_manifest_clip(idx, mode='lateral'):
+    """Cut one uploaded clip into its per-group manifest-export folder.
+
+    Returns a status dict (`ok` / `skipped`) or raises for a true export error
+    so the caller can report the exact failing clip.
+    """
+    import csv
+    display = CLIPS[idx]
+    group = CLIP_GROUPS.get(display, 'sem_grupo')
+    clip_name = os.path.basename(os.path.normpath(clip_path(idx)))
+    out_folder = _manifest_clip_out_dir(idx, mode)
+
+    if mode == 'lateral':
+        sug = suggest_lateral_deviation(idx)
+    else:
+        sug = suggest_crop(idx, 'walking')
+    if not sug.get('found'):
+        return {'status': 'skipped', 'source_display': display,
+                'message': str(sug.get('message', 'no_segment'))}
+
+    start, end = float(sug['start']), float(sug['end'])
+    if os.path.isdir(out_folder):
+        shutil.rmtree(out_folder, ignore_errors=True)
+    os.makedirs(out_folder, exist_ok=True)
+    out_video = os.path.join(out_folder, clip_name + '.mp4')
+
+    try:
+        _ffmpeg_cut(clip_video_path(idx), start, end, out_video)
+    except Exception as e:
+        shutil.rmtree(out_folder, ignore_errors=True)
+        raise RuntimeError(f'ffmpeg_error ({display}): {e}')
+
+    try:
+        save_sensor_data(idx, start, end, out_folder)
+    except Exception:
+        pass
+
+    selection = ssim_frame_selection(idx, start, end)
+    try:
+        save_ssim_selection(selection, out_folder)
+    except Exception:
+        pass
+
+    # Append (or refresh) the per-group sources.csv ledger.
+    group_dir = _manifest_group_dir(group, mode)
+    os.makedirs(group_dir, exist_ok=True)
+    csv_path = os.path.join(group_dir, 'sources.csv')
+    manifest = _find_dataset_manifest(_clip_dataset_root(idx))
+    record = _load_manifest_rows(manifest).get(_norm_manifest_id(clip_name), {}) if manifest else {}
+    fieldnames = ['manifest_id', 'output_folder', 'source_display', 'group',
+                  'start', 'end', 'duration', 'label']
+    existing = []
+    if os.path.isfile(csv_path):
+        with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+            existing = [r for r in csv.DictReader(f) if r.get('manifest_id') != clip_name]
+    existing.append({
+        'manifest_id': clip_name,
+        'output_folder': clip_name,
+        'source_display': display,
+        'group': group,
+        'start': f'{start:.3f}',
+        'end': f'{end:.3f}',
+        'duration': f'{end - start:.3f}',
+        'label': _manifest_label(clip_name, record),
+    })
+    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        w.writerows(existing)
+
+    return {'status': 'ok', 'source_display': display, 'clip_idx': idx,
+            'mode': mode, 'start': round(start, 3), 'end': round(end, 3),
+            'output_folder': clip_name, 'video': out_video}
+
+
+def build_manifest_review(mode='lateral'):
+    """One review MP4 of every successful manifest cut, in queue order."""
+    videos = []
+    for item in plan_manifest_export(mode):
+        clip_name = item['manifest_id']
+        out_dir = _manifest_clip_out_dir(item['clip_idx'], mode)
+        candidate = os.path.join(out_dir, clip_name + '.mp4')
+        if os.path.isfile(candidate):
+            videos.append(candidate)
+    if not videos:
+        return {'status': 'error', 'message': 'nenhum clipe exportado encontrado'}
+    review_path = os.path.join(MANIFEST_EXPORTS_DIR, f'all_uploaded_{mode}_review.mp4')
+    frames = _write_export_review_video(videos, review_path)
+    return {'status': 'ok', 'mode': mode, 'videos': len(videos), 'frames': frames,
+            'path': review_path, 'url': _derived_file_url(review_path)}
 
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
@@ -2087,6 +3013,15 @@ def export_file(folder, relpath):
         return 'Not found',404
     return send_from_directory(base, relpath, conditional=True)
 
+
+@app.route('/derived-file/<path:relpath>')
+def derived_file(relpath):
+    base = os.path.abspath(DERIVED_DIR)
+    target = os.path.abspath(os.path.join(base, relpath))
+    if not target.startswith(base + os.sep) or not os.path.isfile(target):
+        return 'Not found',404
+    return send_from_directory(base, relpath, conditional=True)
+
 @app.route('/api/data/<int:idx>')
 def api_data(idx):
     if idx<0 or idx>=len(CLIPS): return jsonify({'error':'out of range'}),404
@@ -2101,6 +3036,18 @@ def api_dronet(idx):
         time_s = 0.0
     exact = request.args.get('exact') in ('1', 'true', 'yes')
     result = dronet_frame_classification(idx, time_s, exact=exact)
+    status = 200 if result.get('available') else 503
+    return jsonify(result), status
+
+@app.route('/api/sensemodel/<int:idx>')
+def api_sensemodel(idx):
+    if idx<0 or idx>=len(CLIPS): return jsonify({'available':False,'error':'out of range'}),404
+    try:
+        time_s = float(request.args.get('time', '0') or 0)
+    except ValueError:
+        time_s = 0.0
+    exact = request.args.get('exact') in ('1', 'true', 'yes')
+    result = sensemodel_frame_classification(idx, time_s, exact=exact)
     status = 200 if result.get('available') else 503
     return jsonify(result), status
 
@@ -2178,13 +3125,14 @@ def api_suggest(idx):
     if idx<0 or idx>=len(CLIPS): return jsonify({'found':False}),404
     mode = request.args.get('mode', 'vertical')
     try:
-        threshold = _request_ssim_threshold()
+        metric = _request_metric()
+        threshold = _request_ssim_threshold(metric=metric)
     except ValueError as e:
         return jsonify({'found':False, 'error':str(e)}),400
     if mode == 'lateral':
-        return jsonify(_suggestion_with_ssim(idx, suggest_lateral_deviation(idx), threshold=threshold))
+        return jsonify(_suggestion_with_ssim(idx, suggest_lateral_deviation(idx), threshold=threshold, metric=metric))
     if mode not in ('vertical', 'walking'): mode = 'vertical'
-    return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, mode), threshold=threshold))
+    return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, mode), threshold=threshold, metric=metric))
 
 @app.route('/api/ssim/<int:idx>')
 def api_ssim(idx):
@@ -2192,17 +3140,34 @@ def api_ssim(idx):
     try:
         start = float(request.args.get('start', '0') or 0)
         end = float(request.args.get('end', '0') or 0)
-        threshold = _request_ssim_threshold()
+        metric = _request_metric()
+        threshold = _request_ssim_threshold(metric=metric)
     except ValueError as e:
-        if 'SSIM' in str(e):
+        if 'SSIM' in str(e) or 'metric' in str(e):
             return jsonify({'error':str(e)}),400
         return jsonify({'error':'invalid start/end'}),400
     if end <= start:
         return jsonify({'error':'end must be greater than start'}),400
     try:
-        return jsonify(ssim_selection_payload(idx, start, end, threshold=threshold))
+        return jsonify(ssim_selection_payload(idx, start, end, threshold=threshold, metric=metric))
     except Exception as e:
         return jsonify({'error':str(e)}),500
+
+@app.route('/api/imu-events/<int:idx>')
+def api_imu_events(idx):
+    if idx < 0 or idx >= len(CLIPS):
+        return jsonify({'error': 'out of range'}), 404
+    try:
+        delta = float(request.args.get('delta') or IMU_EVENT_DELTA_SEC)
+        if not 0.0 < delta <= 5.0:
+            raise ValueError
+    except ValueError:
+        return jsonify({'error': 'delta must be between 0 and 5 seconds'}), 400
+    try:
+        return jsonify(detect_imu_events(idx, delta=delta))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/batch-export', methods=['POST'])
 def api_batch_export():
@@ -2217,13 +3182,56 @@ def api_batch_export():
     summary = export_set(indices, out_dir, mode=mode)
     return jsonify({'status':'ok','preset':preset,'mode':mode, **summary})
 
+@app.route('/api/manifest-export', methods=['POST'])
+def api_manifest_export():
+    body = request.json or {}
+    mode = body.get('mode', 'lateral')
+    if mode not in ('walking', 'lateral'):
+        return jsonify({'status':'error','message':'invalid mode'}),400
+    reset = body.get('reset', True)
+    if reset and os.path.isdir(MANIFEST_EXPORTS_DIR):
+        shutil.rmtree(MANIFEST_EXPORTS_DIR, ignore_errors=True)
+    items = plan_manifest_export(mode)
+    return jsonify({'status':'ok','mode':mode,'total':len(items),'items':items})
+
+@app.route('/api/manifest-export/clip', methods=['POST'])
+def api_manifest_export_clip():
+    body = request.json or {}
+    mode = body.get('mode', 'lateral')
+    if mode not in ('walking', 'lateral'):
+        return jsonify({'status':'error','message':'invalid mode'}),400
+    try:
+        idx = int(body.get('clip_idx'))
+    except (TypeError, ValueError):
+        return jsonify({'status':'error','message':'clip_idx invalido'}),400
+    if idx<0 or idx>=len(CLIPS):
+        return jsonify({'status':'error','message':'out of range'}),404
+    try:
+        return jsonify(export_manifest_clip(idx, mode=mode))
+    except Exception as e:
+        return jsonify({'status':'error','source_display':CLIPS[idx],'message':str(e)}),500
+
+@app.route('/api/manifest-export/review', methods=['POST'])
+def api_manifest_export_review():
+    body = request.json or {}
+    mode = body.get('mode', 'lateral')
+    if mode not in ('walking', 'lateral'):
+        return jsonify({'status':'error','message':'invalid mode'}),400
+    try:
+        result = build_manifest_review(mode)
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}),500
+    status = 200 if result.get('status') == 'ok' else 500
+    return jsonify(result), status
+
 @app.route('/api/crop', methods=['POST'])
 def api_crop():
     body  = request.json
     idx   = int(body.get('clip_idx', 0))
     start = float(body['start']); end = float(body['end'])
     try:
-        ssim_threshold = _body_ssim_threshold(body)
+        ssim_metric = _coerce_metric(body.get('ssim_metric'))
+        ssim_threshold = _body_ssim_threshold(body, metric=ssim_metric)
     except ValueError as e:
         return jsonify({'status':'error','message':str(e)}),400
     raw_name = re.sub(r'[^\w\-]','_',(body.get('name') or '').strip())
@@ -2263,7 +3271,7 @@ def api_crop():
         pass  # sensor data save failure is non-fatal
     ssim_review = None
     try:
-        selection = ssim_frame_selection(idx, start, end, threshold=ssim_threshold)
+        selection = ssim_frame_selection(idx, start, end, threshold=ssim_threshold, metric=ssim_metric)
         save_ssim_selection(selection, export_folder)
         review_counts = save_ssim_review_videos(idx, start, end, selection, export_folder)
         ssim_review = {

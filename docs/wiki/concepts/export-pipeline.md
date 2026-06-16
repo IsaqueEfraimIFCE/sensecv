@@ -1,4 +1,4 @@
----
+﻿---
 type: concept
 tags: [workflow, ffmpeg, export]
 code_refs: [app.py]
@@ -22,12 +22,7 @@ What happens when the operator clicks **Exportar** -> `POST /api/crop` ->
    `time_usec` (and frame `sensor_timestamp`) so the window starts at 0. Frame
    ids re-number from 0. Output matches the raw schema ([[clip-data-model]]).
    Failure here is swallowed; the video still exports.
-4. **Save SSIM audit.** `ssim_frame_selection()` writes
-   `ssim_selection.json`; `save_ssim_review_videos()` writes
-   `ssim_review/all_frames.mp4`, `chosen_frames.mp4`, and
-   `not_chosen_frames.mp4` so the retained-frame count can be checked visually.
-   SSIM/audit-video failures are non-fatal.
-5. **Record.** Append a row to [[history-json]] and return the new
+4. **Record.** Append a row to [[history-json]] and return the new
    export state/next number.
 
 ## ffmpeg command shape

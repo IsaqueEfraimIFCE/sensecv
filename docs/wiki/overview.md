@@ -1,8 +1,8 @@
----
+﻿---
 type: meta
 tags: [overview, synthesis]
 code_refs: [app.py, templates/index.html]
-updated: 2026-06-06
+updated: 2026-06-03
 ---
 
 # SenseCV - Overview
@@ -45,7 +45,6 @@ source folder and includes an `exports` group for reviewing exported clips.
 | GitHub project state | [[github-repository]] |
 | Export ledger | [[history-json]] |
 | Live DroNet inference | [[dronet-live-classification]] |
-| Vendored DroNet runtime and research source | [[dronet-overview]], [[source-inventory]] |
 
 ## Core ideas
 
@@ -66,9 +65,6 @@ source folder and includes an `exports` group for reviewing exported clips.
   contact sheets over the 02-06-2026 gimbal dataset.
 - [[dronet-live-classification]] - on-demand DroNet predictions in the Flask
   viewer for paused frames and 3 FPS playback.
-- [[dronet-overview]] - the bundled DroNet source layer, including the
-  PyTorch port, upstream Keras repo, paper sources, and offline inference
-  scripts now kept under `dronet/`.
 
 ## End-to-end flow
 

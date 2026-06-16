@@ -1,11 +1,11 @@
----
+﻿---
 type: concept
 tags: [frontend, playback, sync]
 code_refs: [templates/index.html]
 updated: 2026-05-26
 ---
 
-# Video–sensor synchronization
+# Videoâ€“sensor synchronization
 
 How the [[viewer-frontend]] keeps the video, the three charts, the live value
 boxes, and the timeline playhead in lockstep so you can *watch the sensors move
@@ -16,14 +16,14 @@ with the footage*.
 `currentTime`. All per-frame arrays (`accel`, `rotation`, `velocity`) are indexed
 by that frame, so a video time maps directly to sensor values.
 
-## `onTime()` — the update hub
+## `onTime()` â€” the update hub
 On every tick it: updates the time/frame labels, sets each chart's cursor
 (`_cursorX`) via the `vline` plugin, refreshes the value boxes, and redraws the
 timeline playhead. Fired from `timeupdate` and `seeking` events (covers scrubbing
 and arrow-key seeks).
 
 ## Smooth playback loop
-`timeupdate` only fires ~4×/s, which makes the cursor stutter during playback.
+`timeupdate` only fires ~4Ã—/s, which makes the cursor stutter during playback.
 So while playing, a `requestAnimationFrame` loop (`syncLoop()`) calls `onTime()`
 every animation frame for a smooth cursor. It starts on `play`, stops on
 `pause`/`ended`. The play/pause button text and `Space` shortcut are wired to the

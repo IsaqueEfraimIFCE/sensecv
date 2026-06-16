@@ -1,4 +1,4 @@
----
+﻿---
 type: entity
 tags: [data-model, output]
 code_refs: [app.py]

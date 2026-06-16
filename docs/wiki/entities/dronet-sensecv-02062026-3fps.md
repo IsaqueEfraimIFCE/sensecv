@@ -8,7 +8,7 @@ updated: 2026-06-03
 # DroNet SenseCV 02-06-2026 3 FPS
 
 `run_sensecv_02062026_dronet_3fps.py` runs the local DroNet PyTorch port from
-`PilotGuru\dronet` over every clip in the 02-06-2026 SenseCV
+`C:\Users\Isaque\Desktop\dronet` over every clip in the 02-06-2026 SenseCV
 gimbal dataset, sampled at 3 frames per second.
 
 This differs from [[dronet-samsung-samples]]: it is exhaustive over the target
@@ -22,9 +22,9 @@ Flask for the viewer's current paused frame or 3 FPS playback bucket.
 - Video root:
   `SenseCV-02-06-2026-IFCE-Gimbal\SenseCV-02-06-2026-IFCE-Gimbal`
 - DroNet checkout:
-  `PilotGuru\dronet`
+  `C:\Users\Isaque\Desktop\dronet`
 - DroNet weights:
-  `dronet\repo\model\model_weights.h5`
+  `C:\Users\Isaque\Desktop\dronet\repo\model\model_weights.h5`
 
 The dataset has 32 clip folders (`01` through `32`), each with `video.mp4`.
 

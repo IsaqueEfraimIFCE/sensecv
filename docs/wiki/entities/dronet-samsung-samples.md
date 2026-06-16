@@ -1,4 +1,4 @@
----
+﻿---
 type: entity
 tags: [dronet, inference, samsung, SenseCV]
 code_refs: [run_samsung_dronet_samples.py]
@@ -8,7 +8,7 @@ updated: 2026-05-31
 # DroNet Samsung random samples
 
 `run_samsung_dronet_samples.py` runs the local DroNet PyTorch port from
-`PilotGuru\dronet` over randomly sampled frames from the Samsung
+`C:\Users\Isaque\Desktop\dronet` over randomly sampled frames from the Samsung
 30-05-2026 SenseCV gimbal dataset.
 
 ## Inputs
@@ -16,9 +16,9 @@ updated: 2026-05-31
 - Video root:
   `C:\Users\Isaque\Downloads\SenseCV-30-05-2026-IFCE-Gimbal-Samsung\SenseCV-30-05-2026-IFCE-Gimbal-Samsung`
 - Metadata CSV:
-  `C:\Users\Isaque\Downloads\Coleta  IFCE - 30 de maio de 2026 - ANDRÉ (Samsung) - Página1.csv`
+  `C:\Users\Isaque\Downloads\Coleta  IFCE - 30 de maio de 2026 - ANDRÃ‰ (Samsung) - PÃ¡gina1.csv`
 - DroNet weights:
-  `dronet\repo\model\model_weights.h5`
+  `C:\Users\Isaque\Desktop\dronet\repo\model\model_weights.h5`
 
 The CSV has 53 physical rows, but only 48 non-empty unique `ID` values
 (`1`-`48`). These match the 48 Samsung clip folders.

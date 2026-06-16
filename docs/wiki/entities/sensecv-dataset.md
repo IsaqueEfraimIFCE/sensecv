@@ -29,8 +29,12 @@ per-ID DroNet sample inference.
 
 Cut modes (full detail in [[crop-suggestion]]):
 - **walking** — `suggest_crop(idx, 'walking')`, the walking-only segment.
-- **lateral** — `suggest_lateral_deviation(idx)`, the single longest sustained
-  lateral-acceleration burst ≥ 0.2 s.
+- **lateral** - `suggest_lateral_deviation(idx)`, the strongest sustained
+  intentional left/right phone tilt over 1 s.
+
+Current lateral mode uses sustained relative phone roll from the accelerometer
+gravity direction, not integrated horizontal acceleration; see
+[[crop-suggestion]] for the roll-axis and threshold configuration.
 
 All four are deliberately **separate from `exports/`** (the classified, labeled
 dataset that feeds [[history-json]] and trains the walking-window classifier).

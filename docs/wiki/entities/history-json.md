@@ -1,4 +1,4 @@
----
+﻿---
 type: entity
 tags: [data-model, ledger]
 code_refs: [app.py]

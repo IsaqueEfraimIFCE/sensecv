@@ -1,4 +1,4 @@
----
+﻿---
 type: entity
 tags: [backend, flask, python]
 code_refs: [app.py]
@@ -65,7 +65,6 @@ folders can appear in the UI without restarting.
 | `suggest_lateral_deviation()` | Highest mean lateral-velocity window for sidestep/deviation clips | [[crop-suggestion]] |
 | `_ffmpeg_cut()` | H.264 export cut preserving rotation metadata | [[export-pipeline]] |
 | `save_sensor_data()` | Filters and re-bases sensor JSON to the crop window | [[export-pipeline]] |
-| `save_ssim_review_videos()` | Writes SSIM audit videos for all/chosen/not-chosen crop frames | [[export-pipeline]] |
 | `api_crop()` | ffmpeg cut plus sensor save plus history append | [[export-pipeline]] |
 | `export_set()` | Batch driver; loops preset clips, runs ffmpeg and sensor save, writes `sources.csv` | [[SenseCV-dataset]] |
 | `api_batch_export()` | `POST /api/batch-export` wrapper around `export_set()` | [[SenseCV-dataset]], [[api-routes]] |
