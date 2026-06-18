@@ -306,11 +306,19 @@ body.clip-horizontal .video-wrapper{height:55vh}
 
     <div class="section">
       <h3>SenseCV (.keras)</h3>
+      <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
+        Modelo ativo: <code id="sm-model-name">best_model.keras</code>
+      </p>
       <div class="dronet-grid">
         <div class="val-box dronet-collision" id="sm-obstacle-box"><div class="val-label">Obstáculo</div><div class="val-num" id="sm-obstacle" style="color:var(--gold)">-</div><div class="val-unit">prob.</div></div>
         <div class="val-box"><div class="val-label">Desvio</div><div class="val-num" id="sm-deviation" style="color:var(--accent)">-</div><div class="val-unit">prob.</div></div>
       </div>
       <div class="dronet-status" id="sm-status">Aguardando frame...</div>
+      <div class="upload-row" style="margin-top:.5em">
+        <input type="file" id="model-upload" accept=".keras">
+        <button class="btn" id="btn-upload-model">Trocar modelo</button>
+        <button class="btn" id="btn-reset-model">Padrão</button>
+      </div>
     </div>
 
     <!-- Crop -->
@@ -458,6 +466,26 @@ body.clip-horizontal .video-wrapper{height:55vh}
       </div>
       <div class="dronet-status" id="manifest-progress"></div>
       <div class="ssim-review-links hidden" id="manifest-export-links"></div>
+    </div>
+
+    <!-- Deviation export + validation video -->
+    <div class="section">
+      <h3>Exportar desvios + validação</h3>
+      <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
+        Exporta o <strong>corte sugerido</strong> de cada clipe cujo desvio os
+        sensores classificam como <code>LEFT</code>/<code>RIGHT</code> (sem ML;
+        <code>NONE</code> é ignorado). Os exports são iguais a um export comum
+        (limpos, sem legenda). Gera ainda um único <strong>vídeo de validação</strong>
+        a 30fps com o cabeçalho do desvio. Grava em <code>data/derived/deviation_exports/</code>.
+      </p>
+      <div class="upload-row">
+        <input type="number" id="inspect-count" min="1" step="1" placeholder="qtde"
+               style="width:6em" value="10">
+        <button class="btn" id="btn-inspect-count">Exportar N</button>
+        <button class="btn" id="btn-inspect-all" data-inspect="all">Todos</button>
+      </div>
+      <div class="dronet-status" id="inspect-progress"></div>
+      <div class="ssim-review-links hidden" id="inspect-links"></div>
     </div>
 
     <!-- Dataset upload -->
@@ -971,6 +999,7 @@ function renderSensemodel(d){
   document.getElementById('sm-obstacle').textContent = `${d.obstacle_label} ${d.obstacle_prob.toFixed(3)}`;
   document.getElementById('sm-deviation').textContent = `${d.deviation_label} ${d.deviation_prob.toFixed(3)}`;
   document.getElementById('sm-obstacle-box').classList.toggle('warn', d.obstacle_label === 'OBSTACLE');
+  if(d.model) document.getElementById('sm-model-name').textContent = d.model;
   status.className = 'dronet-status ok';
   status.textContent = `${d.exact ? 'frame pausado' : '3 fps'}: f${d.frame} t=${d.time_s.toFixed(3)}s`;
 }
@@ -1582,6 +1611,53 @@ document.querySelectorAll('[data-preset]').forEach(b =>
   b.addEventListener('click', () => runBatchExport(b))
 );
 
+// ═══ Deviation export + validation video ════════
+function showInspectResult(d){
+  const el = document.getElementById('inspect-links');
+  if(!el) return;
+  const links = [];
+  if(d.validation_url) links.push([`Vídeo de validação (${d.validation_frames} frames @ ${d.play_fps}fps)`, d.validation_url]);
+  if(d.csv_url) links.push([`Exportações (sources.csv)`, d.csv_url]);
+  el.innerHTML = links.map(([label, url]) =>
+    `<a href="${url}" target="_blank" rel="noopener">${label}</a>`).join('');
+  el.classList.toggle('hidden', !links.length);
+}
+
+async function runInspect(count){
+  const inspectBtns = document.querySelectorAll('#btn-inspect-count, #btn-inspect-all');
+  const progress = document.getElementById('inspect-progress');
+  inspectBtns.forEach(b => b.disabled = true);
+  document.getElementById('inspect-links').classList.add('hidden');
+  progress.className = 'dronet-status';
+  progress.textContent = `Exportando + validando (${count === 'all' ? 'todos' : count} clipes)… pode demorar.`;
+  try{
+    const r = await fetch('/api/inspect-deviation',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({count})
+    });
+    const d = await parseJsonResponse(r);
+    if(!r.ok || d.status !== 'ok') throw new Error(d.message || 'falha ao gerar vídeo');
+    showInspectResult(d);
+    progress.className = 'dronet-status ok';
+    const c = d.counts || {};
+    progress.textContent = `✓ ${d.exported}/${d.requested} exportados · L:${c.LEFT||0} R:${c.RIGHT||0} · ${d.skipped_none} sem desvio`;
+    showToast(`✓ ${d.exported} clipes exportados + vídeo de validação`,'ok');
+  }catch(e){
+    progress.className = 'dronet-status err';
+    progress.textContent = 'Erro: '+e.message;
+    showToast('Erro: '+e.message,'err');
+  }finally{
+    inspectBtns.forEach(b => b.disabled = false);
+  }
+}
+
+document.getElementById('btn-inspect-count').addEventListener('click', () => {
+  const n = parseInt(document.getElementById('inspect-count').value, 10);
+  if(!Number.isFinite(n) || n < 1){ showToast('Informe uma quantidade válida','err'); return; }
+  runInspect(n);
+});
+document.getElementById('btn-inspect-all').addEventListener('click', () => runInspect('all'));
+
 function showManifestLinks(result){
   const el = document.getElementById('manifest-export-links');
   if(!el) return;
@@ -1692,6 +1768,73 @@ async function uploadZipDataset(){
   }
 }
 document.getElementById('btn-upload-zip').addEventListener('click', uploadZipDataset);
+
+// ═══ SenseCV .keras model swap ══════════════════
+async function loadSensemodelInfo(){
+  try{
+    const r = await fetch('/api/sensemodel-info');
+    const d = await parseJsonResponse(r);
+    if(d.name) document.getElementById('sm-model-name').textContent = d.name;
+  }catch(e){ /* panel keeps its default label */ }
+}
+
+async function parseJsonResponse(r){
+  const text = await r.text();
+  try{
+    return JSON.parse(text);
+  }catch(e){
+    // Non-JSON body (usually Flask's HTML 404/500 page) -> stale server.
+    throw new Error(r.status === 404
+      ? 'rota ausente — reinicie o servidor para carregar as rotas de modelo'
+      : `resposta inválida do servidor (HTTP ${r.status})`);
+  }
+}
+
+async function swapModel(url, file){
+  const form = new FormData();
+  if(file) form.append('model', file);
+  showOverlay(file ? `Carregando ${file.name}...` : 'Restaurando modelo padrão...');
+  try{
+    const r = await fetch(url, {method:'POST', body:form});
+    const d = await parseJsonResponse(r);
+    if(!r.ok || d.status !== 'ok') throw new Error(d.message || 'falha ao trocar modelo');
+    if(d.name) document.getElementById('sm-model-name').textContent = d.name;
+    resetSensemodelPanel();
+    requestSensemodel(true);  // re-run on the current frame with the new model
+    showToast(d.message || 'Modelo atualizado','ok');
+  }catch(e){
+    showToast('Erro: '+e.message,'err');
+  }finally{
+    hideOverlay();
+  }
+}
+
+async function uploadModel(){
+  const input = document.getElementById('model-upload');
+  const file = input.files?.[0];
+  if(!file){ showToast('Selecione um arquivo .keras','err'); return; }
+  const btn = document.getElementById('btn-upload-model');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Carregando...';
+  await swapModel('/api/upload-model', file);
+  input.value = '';
+  btn.textContent = original;
+  btn.disabled = false;
+}
+
+async function resetModel(){
+  const btn = document.getElementById('btn-reset-model');
+  const original = btn.textContent;
+  btn.disabled = true;
+  await swapModel('/api/reset-model', null);
+  btn.textContent = original;
+  btn.disabled = false;
+}
+
+document.getElementById('btn-upload-model').addEventListener('click', uploadModel);
+document.getElementById('btn-reset-model').addEventListener('click', resetModel);
+loadSensemodelInfo();
 
 // ═══ Classification radios ══════════════════════
 function radioVal(id){ return document.querySelector(`#${id} .rchip.active`)?.dataset.val??null; }

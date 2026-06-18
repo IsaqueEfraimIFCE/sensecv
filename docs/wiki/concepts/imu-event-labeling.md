@@ -2,7 +2,7 @@
 type: concept
 tags: [imu, labeling, events, sensor, methodology]
 code_refs: [src/sensecv/app.py, scripts/imu_event_report.py]
-updated: 2026-06-12
+updated: 2026-06-18
 ---
 
 # IMU event labeling (criterios PDF)
@@ -80,6 +80,11 @@ stops less than 1 s after the person stops.
 
 ## Surfaces
 
+- `app.py › suggest_deviation_cut(idx)` — turns the strongest `desvio` event
+  into the suggested deviation cut (the `decisao` window by default,
+  `SENSECV_DEVIATION_CUT_WINDOW`). This is what the deviation export +
+  validation video feed on (`/api/inspect-deviation`, `export_set(mode='deviation')`).
+  See [[crop-suggestion]].
 - `GET /api/imu-events/<idx>?delta=` — see [[api-routes]].
 - Viewer "Eventos IMU" panel — Δ selector + Detectar button; each event shows
   type, direction, T1/T2, confidence, and three window buttons that apply the

@@ -32,10 +32,12 @@ EXPORTS_DIR = os.environ.get('SENSECV_EXPORTS_DIR', os.path.join(DATA_DIR, 'expo
 HISTORY_FILE = os.environ.get('SENSECV_HISTORY_FILE', os.path.join(DATA_DIR, 'history.json'))
 UPLOADS_DIR = os.environ.get('SENSECV_UPLOADS_DIR', os.path.join(DATA_DIR, 'uploaded_datasets'))
 DERIVED_DIR = os.environ.get('SENSECV_DERIVED_DIR', os.path.join(DATA_DIR, 'derived'))
+MODELS_DIR = os.environ.get('SENSECV_MODELS_DIR', os.path.join(DATA_DIR, 'models'))
 os.makedirs(CLIPS_DIR, exist_ok=True)
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 os.makedirs(UPLOADS_DIR, exist_ok=True)
 os.makedirs(DERIVED_DIR, exist_ok=True)
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 app = Flask(__name__, template_folder=os.path.join(APP_DIR, 'templates'))
 app.config['TEMPLATES_AUTO_RELOAD'] = True
@@ -150,11 +152,14 @@ def find_clips():
     Clips in the primary root keep their bare folder name (so existing history
     and exports stay valid); clips from extra roots are prefixed with the root
     folder name to keep display names unique across roots.
+
+    The shared lookup dicts are built locally and swapped in atomically at the
+    end. With threaded=True, a concurrent reader (e.g. the long inspection loop
+    while the UI polls /api/export-state) must never observe a half-cleared
+    dict; rebinding the module globals is atomic, clear()+repopulate is not.
     """
-    CLIP_PATHS.clear()
-    CLIP_VIDEO_PATHS.clear()
-    CLIP_GROUPS.clear()
-    WALKING_ONLY.clear()
+    global CLIP_PATHS, CLIP_VIDEO_PATHS, CLIP_GROUPS, WALKING_ONLY
+    clip_paths, clip_video_paths, clip_groups, walking_only_set = {}, {}, {}, set()
     clips = []
     # (root, label, walking_only). The primary root is the supermarket footage
     # (held vertical); the extra roots are filmed horizontally throughout.
@@ -191,12 +196,15 @@ def find_clips():
         for display_name, clip_dir, discovered_group in _discover_clip_dirs(root, recursive):
             display = display_name if label is None else f"{label}/{display_name}"
             group = discovered_group if recursive and discovered_group else label or 'Supermercado Telefrango'
-            CLIP_PATHS[display] = clip_dir
-            CLIP_VIDEO_PATHS[display] = _clip_video_file(clip_dir)
-            CLIP_GROUPS[display] = group
+            clip_paths[display] = clip_dir
+            clip_video_paths[display] = _clip_video_file(clip_dir)
+            clip_groups[display] = group
             if walking_only:
-                WALKING_ONLY.add(display)
+                walking_only_set.add(display)
             clips.append(display)
+    # Atomic swap: readers see either the old maps or the fully-built new ones.
+    CLIP_PATHS, CLIP_VIDEO_PATHS, CLIP_GROUPS, WALKING_ONLY = (
+        clip_paths, clip_video_paths, clip_groups, walking_only_set)
     return clips
 
 CLIPS = find_clips()
@@ -1150,6 +1158,15 @@ def _imu_walking_series(idx):
 def _moving_average(values, frames):
     frames = min(len(values), max(1, int(frames)))
     return np.convolve(values, np.ones(frames) / frames, mode='same')
+
+
+def _centered_rolling_mean(values, frames):
+    """Centered moving average, same length as input.
+
+    Name used by the IMU event detector ([[imu-event-labeling]]); identical to
+    _moving_average but tolerant of list input.
+    """
+    return _moving_average(np.asarray(values, dtype=np.float64), frames)
 
 
 def _rolling_std(values, frames):
@@ -2368,6 +2385,51 @@ def detect_imu_events(idx, delta=None):
             'duration_s': round(duration, 3)}
 
 
+# PDF (criterios_imu_video_orientando) §2.2: the deviation cut is one of three
+# label windows around the IMU-detected event (T1 = physical start, T2 = return
+# to a stabilized trajectory). The default is the "decisão visual" window
+# (T1-Δ → T1) — the scene just before the body reacts, which §2.1/§10 call the
+# most adequate target for training a predictive CNN.
+DEVIATION_CUT_WINDOW = os.environ.get('SENSECV_DEVIATION_CUT_WINDOW', 'decisao')
+
+
+def suggest_deviation_cut(idx, delta=None, window=None):
+    """Suggested deviation cut from the IMU event windows (PDF §2.2/§2.3).
+
+    Picks the strongest `desvio` event from `detect_imu_events` and returns the
+    requested label window:
+      'decisao'   -> [T1-Δ, T1]          scene before the reaction (default)
+      'acao'      -> [T1, T2]            the deviation execution
+      'expandido' -> [T1-Δ, T2+margem]   both, robust to sync uncertainty
+    Side (LEFT/RIGHT) comes from the same event's direction, so cut and label
+    are always consistent. Returns found=False when no desvio qualifies.
+    """
+    window = window or DEVIATION_CUT_WINDOW
+    try:
+        result = detect_imu_events(idx, delta=delta)
+    except Exception as e:
+        return {'found': False, 'mode': 'deviation', 'has_vertical': True,
+                'message': f'IMU indisponivel: {e}'}
+    desvios = [e for e in result.get('events', []) if e.get('type') == 'desvio']
+    if not desvios:
+        return {'found': False, 'mode': 'deviation', 'has_vertical': True,
+                'message': 'nenhum desvio detectado pela IMU'}
+    best = max(desvios, key=lambda e: e.get('strength', 0.0))
+    windows = best.get('windows', {})
+    win = windows.get(window) or windows.get('decisao') or [best['t1'], best['t2']]
+    start, end = float(win[0]), float(win[1])
+    if end - start < 0.2:  # near clip-start truncation: keep a usable minimum
+        start = max(0.0, end - 0.2)
+    side = {'esquerda': 'LEFT', 'direita': 'RIGHT'}.get(best.get('direction'), 'NONE')
+    return {
+        'found': True, 'mode': 'deviation', 'window': window, 'has_vertical': True,
+        'start': round(start, 3), 'end': round(end, 3),
+        't1': best['t1'], 't2': best['t2'], 'delta': result.get('delta'),
+        'direction': best.get('direction'), 'side': side,
+        'confidence': best.get('confidence'), 'strength': best.get('strength'),
+    }
+
+
 def _safe_clip_name(display):
     return display.replace('/', '_').replace('\\', '_')
 
@@ -2469,7 +2531,7 @@ def _write_export_review_video(video_paths, out_video, fps=SSIM_REVIEW_FPS):
     return written
 
 
-def export_set(indices, out_dir, mode='walking', verbose=False):
+def export_set(indices, out_dir, mode='walking', verbose=False, build_review=True):
     """Batch-export an auto-suggested cut per clip into `out_dir`.
 
     mode='walking' uses suggest_crop(idx, 'walking'); mode='lateral' uses
@@ -2501,7 +2563,9 @@ def export_set(indices, out_dir, mode='walking', verbose=False):
                'frames_before': '', 'frames_after': '',
                'ssim_threshold': '', 'ssim_status': '', 'status': ''}
 
-        if mode == 'lateral':
+        if mode == 'deviation':
+            sug = suggest_deviation_cut(idx)
+        elif mode == 'lateral':
             sug = suggest_lateral_deviation(idx)
         else:
             sug = suggest_crop(idx, 'walking')
@@ -2566,7 +2630,7 @@ def export_set(indices, out_dir, mode='walking', verbose=False):
         w.writeheader(); w.writerows(rows)
 
     review = None
-    if exported_videos:
+    if exported_videos and build_review:
         review_path = os.path.join(out_dir, 'review_all_frames.mp4')
         try:
             frame_count = _write_export_review_video(exported_videos, review_path)
@@ -2609,23 +2673,40 @@ PRESETS = ('all', 'sensecv', 'supermarket')
 # when TensorFlow or the model file is unavailable. Heads are matched by output
 # width: 2 classes -> obstacle (NONE/OBSTACLE), 3 classes -> deviation
 # (LEFT/RIGHT/NONE).
+# The default model ships at PROJECT_ROOT/best_model.keras, but the operator can
+# upload any other .keras file at runtime via /api/upload-model. The active path
+# lives in `_sensemodel_runtime['path']` so it can be swapped without a restart;
+# SENSECV_MODEL_PATH remains the env-configurable default / "padrão" fallback.
 SENSECV_MODEL_PATH = os.environ.get(
     'SENSECV_MODEL_PATH', os.path.join(PROJECT_ROOT, 'best_model.keras'))
 SENSECV_OBSTACLE_LABELS = ['NONE', 'OBSTACLE']
 SENSECV_DEVIATION_LABELS = ['LEFT', 'RIGHT', 'NONE']
-_sensemodel_runtime = {'model': None, 'error': None}
+_sensemodel_runtime = {'model': None, 'error': None, 'path': SENSECV_MODEL_PATH}
 _sensemodel_cache = OrderedDict()
+
+
+def _set_sensemodel_path(path):
+    """Point live inference at a new .keras file and drop the cached runtime.
+
+    The next /api/sensemodel request lazily loads the new model. Cached
+    per-frame predictions are cleared so they cannot leak across models.
+    """
+    _sensemodel_runtime['model'] = None
+    _sensemodel_runtime['error'] = None
+    _sensemodel_runtime['path'] = path
+    _sensemodel_cache.clear()
 
 
 def _load_sensemodel_runtime():
     if _sensemodel_runtime['model'] is not None or _sensemodel_runtime['error'] is not None:
         return _sensemodel_runtime
     try:
-        if not os.path.isfile(SENSECV_MODEL_PATH):
-            raise FileNotFoundError(f'modelo .keras nao encontrado: {SENSECV_MODEL_PATH}')
+        path = _sensemodel_runtime['path']
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f'modelo .keras nao encontrado: {path}')
         os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '3')
         from tensorflow import keras
-        _sensemodel_runtime['model'] = keras.models.load_model(SENSECV_MODEL_PATH, compile=False)
+        _sensemodel_runtime['model'] = keras.models.load_model(path, compile=False)
     except Exception as e:
         _sensemodel_runtime['error'] = str(e)
     return _sensemodel_runtime
@@ -2650,6 +2731,36 @@ def _label_for(vec):
     label = labels[i] if i < len(labels) else str(i)
     prob = float(vec[i]) if vec else 0.0
     return label, prob
+
+
+def _sensemodel_preprocess(frame_bgr, model):
+    """Resize/colour-convert one BGR frame into the model's float32 input array.
+
+    The exported MobileNetV2 has an embedded Rescaling(1/127.5, -1) layer, so we
+    feed raw 0-255 pixels here; pre-dividing by 255 collapses the input range.
+    """
+    import cv2
+    h, w, c = _sensemodel_input_shape(model)
+    img = cv2.resize(frame_bgr, (w, h), interpolation=cv2.INTER_AREA)
+    if c == 1:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[..., None]
+    else:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    return img.astype('float32')
+
+
+def _split_head_arrays(preds):
+    """Map raw model outputs to (obstacle_array, deviation_array) by output width.
+
+    Each returned array is shaped (batch, classes): width 2 -> obstacle
+    (NONE/OBSTACLE), width 3 -> deviation (LEFT/RIGHT/NONE).
+    """
+    if not isinstance(preds, (list, tuple)):
+        preds = [preds]
+    arrs = [np.atleast_2d(np.asarray(p)) for p in preds]
+    obstacle_arr = next((a for a in arrs if a.shape[-1] == 2), arrs[0])
+    deviation_arr = next((a for a in arrs if a.shape[-1] == 3), arrs[-1])
+    return obstacle_arr, deviation_arr
 
 
 def sensemodel_frame_classification(idx, time_s, exact=False):
@@ -2692,24 +2803,11 @@ def sensemodel_frame_classification(idx, time_s, exact=False):
     if not ok:
         return {'available': False, 'error': 'frame decode failed', 'frame': frame_idx}
 
-    h, w, c = _sensemodel_input_shape(model)
-    img = cv2.resize(frame, (w, h), interpolation=cv2.INTER_AREA)
-    if c == 1:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)[..., None]
-    else:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    # The model embeds a MobileNetV2 Rescaling layer (0-255 -> [-1,1]), so feed
-    # raw pixel values here; pre-dividing by 255 collapses the input range and
-    # makes every frame look identical (near-constant predictions).
-    batch = img.astype('float32')[None, ...]
-
+    batch = _sensemodel_preprocess(frame, model)[None, ...]
     preds = model.predict(batch, verbose=0)
-    if not isinstance(preds, (list, tuple)):
-        preds = [preds]
-    vectors = [np.asarray(p).reshape(-1).tolist() for p in preds]
-
-    obstacle_vec = next((v for v in vectors if len(v) == 2), vectors[0])
-    deviation_vec = next((v for v in vectors if len(v) == 3), vectors[-1])
+    obstacle_arr, deviation_arr = _split_head_arrays(preds)
+    obstacle_vec = obstacle_arr[0].tolist()
+    deviation_vec = deviation_arr[0].tolist()
     obstacle_label, obstacle_prob = _label_for(obstacle_vec)
     deviation_label, deviation_prob = _label_for(deviation_vec)
 
@@ -2722,6 +2820,7 @@ def sensemodel_frame_classification(idx, time_s, exact=False):
         'sample_fps': DRONET_SAMPLE_FPS,
         'exact': bool(exact),
         'source_fps': round(fps, 4),
+        'model': os.path.basename(_sensemodel_runtime['path']),
         'obstacle_label': obstacle_label,
         'obstacle_prob': obstacle_prob,
         'deviation_label': deviation_label,
@@ -2937,6 +3036,193 @@ def build_manifest_review(mode='lateral'):
             'path': review_path, 'url': _derived_file_url(review_path)}
 
 
+# ─── Deviation inspection video ──────────────────────────────────────────────
+# Two outputs from one request (no ML, sensor-only):
+#   1. Real exports: each deviation clip's auto-suggested lateral cut, exported
+#      with the SAME pipeline as a common export (clean cut + sensors + ssim, via
+#      export_set). No overlay is burned into these files.
+#   2. One validation video: every exported cut's frames concatenated at 30 fps
+#      (no title cards / transitions), each carrying a "Desvio: LEFT|RIGHT"
+#      header banner. The header lives ONLY in this validation video.
+# Only clips with a detected deviation header (LEFT/RIGHT) are exported; clips
+# the sensors read as NONE are skipped.
+INSPECT_PLAY_FPS = float(os.environ.get('SENSECV_INSPECT_FPS', '30'))
+DEVIATION_EXPORTS_DIR = os.path.join(DERIVED_DIR, 'deviation_exports')
+VALIDATION_VIDEO_PATH = os.path.join(DEVIATION_EXPORTS_DIR, 'validation.mp4')
+# BGR colours for cv2 overlays.
+_DEV_COLORS = {'LEFT': (80, 170, 255), 'RIGHT': (80, 170, 255), 'NONE': (120, 230, 120)}
+
+
+def _draw_label_bar(frame, lines):
+    """Draw a translucent top bar with one coloured (text, BGR) line per entry."""
+    import cv2
+    h, w = frame.shape[:2]
+    fs = max(0.5, w / 1100.0)
+    th = max(1, int(round(fs * 2)))
+    line_h = int(40 * fs)
+    pad = int(10 * fs)
+    bar_h = pad * 2 + line_h * len(lines)
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, 0), (w, bar_h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+    y = pad + int(line_h * 0.72)
+    for text, col in lines:
+        cv2.putText(frame, text, (pad + 4, y), cv2.FONT_HERSHEY_SIMPLEX, fs,
+                    col, th, cv2.LINE_AA)
+        y += line_h
+    return frame
+
+
+def _write_validation_video(clips, out_video, fps):
+    """Concatenate the exported cut videos into one validation MP4.
+
+    `clips` is a list of dicts with `video_path` and `deviation` (LEFT/RIGHT).
+    Every source frame is written back-to-back at a constant `fps` (no resampling
+    to real time — playback runs faster than wall-clock, by design) with a
+    "Desvio: <side>" header burned in. No title cards / transitions. The header
+    exists only here; the exported clips themselves stay clean.
+    """
+    import cv2
+    try:
+        import imageio_ffmpeg
+        ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as e:
+        raise RuntimeError(f'ffmpeg indisponivel para video de validacao: {e}')
+
+    clips = [c for c in clips if c.get('video_path') and os.path.isfile(c['video_path'])]
+    if not clips:
+        return 0
+
+    width = height = None
+    for c in clips:
+        cap = cv2.VideoCapture(c['video_path'])
+        if cap.isOpened():
+            width, height = _review_frame_size(
+                cap.get(cv2.CAP_PROP_FRAME_WIDTH), cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+            break
+        cap.release()
+    if width is None:
+        return 0
+
+    os.makedirs(os.path.dirname(out_video), exist_ok=True)
+    cmd = [
+        ffmpeg, '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo', '-pix_fmt', 'rgb24',
+        '-s', f'{width}x{height}', '-r', f'{fps}', '-i', '-', '-an',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+        '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out_video,
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    written = 0
+    try:
+        for c in clips:
+            side = c['deviation']
+            dev_col = _DEV_COLORS.get(side, (235, 235, 235))
+            label = c.get('clip', '')
+            cap = cv2.VideoCapture(c['video_path'])
+            if not cap.isOpened():
+                cap.release()
+                continue
+            while True:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                if frame.shape[1] != width or frame.shape[0] != height:
+                    frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+                _draw_label_bar(frame, [
+                    (label, (235, 235, 235)),
+                    (f'Desvio: {side}', dev_col),
+                ])
+                proc.stdin.write(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).tobytes())
+                written += 1
+            cap.release()
+    finally:
+        if proc.stdin:
+            proc.stdin.close()
+    stderr = proc.stderr.read().decode('utf-8', errors='replace')
+    proc.wait()
+    if proc.returncode != 0:
+        raise RuntimeError(stderr[-500:])
+    return written
+
+
+def export_deviation_set(indices, play_fps=None):
+    """Export every clip whose sensors read a deviation, then build one
+    validation video over those exports.
+
+    Steps:
+      1. For each clip, take its PDF-based deviation cut (`suggest_deviation_cut`:
+         the T1-Δ→T1 decision window by default) and the event's direction. Keep
+         only LEFT/RIGHT — clips with no IMU desvio are skipped ("only the videos
+         with the equivalent header are exported").
+      2. Export the kept clips with `export_set` (mode='deviation'): the exact
+         same clean cut + sensors + ssim a common export produces, no overlay.
+      3. Concatenate the exported cuts into a 30 fps validation video with the
+         deviation header burned in (header lives only in that video).
+    """
+    play_fps = float(play_fps or INSPECT_PLAY_FPS) or INSPECT_PLAY_FPS
+
+    # Phase 1 — pick deviation clips (snapshot idx-based access up front). The cut
+    # window and side both come from the same IMU event, so they stay consistent.
+    plan = []
+    for idx in indices:
+        try:
+            display = CLIPS[idx]
+        except (KeyError, IndexError):
+            continue
+        cut = suggest_deviation_cut(idx)
+        if not cut.get('found') or cut.get('side') not in ('LEFT', 'RIGHT'):
+            plan.append({'clip': display, 'status': 'skipped_no_deviation',
+                         'deviation': 'NONE'})
+            continue
+        plan.append({'idx': idx, 'clip': display, 'status': 'planned',
+                     'start': cut['start'], 'end': cut['end'], 'deviation': cut['side'],
+                     't1': cut['t1'], 't2': cut['t2'], 'window': cut['window'],
+                     'confidence': cut['confidence']})
+
+    keep = [p for p in plan if p['status'] == 'planned']
+    if not keep:
+        raise RuntimeError('nenhum clipe com desvio (LEFT/RIGHT) para exportar')
+
+    # Phase 2 — real exports (same type as a common export). No review here; the
+    # validation video below replaces it. export_set re-runs suggest_deviation_cut
+    # so the exported window matches the plan.
+    summary = export_set([p['idx'] for p in keep], DEVIATION_EXPORTS_DIR,
+                         mode='deviation', build_review=False)
+
+    # Resolve each kept clip's exported cut path (export_set names by clip).
+    for p in keep:
+        name = _safe_clip_name(p['clip'])
+        vp = os.path.join(DEVIATION_EXPORTS_DIR, name, name + '.mp4')
+        if os.path.isfile(vp):
+            p['video_path'] = vp
+            p['status'] = 'exported'
+            p['export_folder'] = name
+        else:
+            p['status'] = 'export_failed'
+
+    exported = [p for p in keep if p['status'] == 'exported']
+    val_frames = _write_validation_video(exported, VALIDATION_VIDEO_PATH, play_fps)
+
+    counts = {'LEFT': 0, 'RIGHT': 0}
+    for p in exported:
+        counts[p['deviation']] = counts.get(p['deviation'], 0) + 1
+    return {
+        'status': 'ok',
+        'requested': len(indices),
+        'exported': len(exported),
+        'skipped_none': sum(1 for p in plan if p['status'] == 'skipped_no_deviation'),
+        'counts': counts,
+        'out_dir': DEVIATION_EXPORTS_DIR,
+        'csv_url': summary.get('csv_url'),
+        'validation_url': _derived_file_url(VALIDATION_VIDEO_PATH) if val_frames else None,
+        'validation_frames': val_frames,
+        'play_fps': play_fps,
+        'clips': [{k: v for k, v in p.items() if k not in ('video_path', 'idx')}
+                  for p in plan],
+    }
+
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 @app.route('/')
@@ -3051,6 +3337,96 @@ def api_sensemodel(idx):
     status = 200 if result.get('available') else 503
     return jsonify(result), status
 
+def _sensemodel_info():
+    path = _sensemodel_runtime['path']
+    return {
+        'name': os.path.basename(path),
+        'path': path,
+        'exists': os.path.isfile(path),
+        'is_default': os.path.abspath(path) == os.path.abspath(SENSECV_MODEL_PATH),
+        'default_name': os.path.basename(SENSECV_MODEL_PATH),
+        'loaded': _sensemodel_runtime['model'] is not None,
+        'error': _sensemodel_runtime['error'],
+    }
+
+@app.route('/api/sensemodel-info')
+def api_sensemodel_info():
+    return jsonify(_sensemodel_info())
+
+@app.route('/api/upload-model', methods=['POST'])
+def api_upload_model():
+    upload = request.files.get('model') or request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'status':'error','message':'Arquivo .keras ausente'}),400
+    if not upload.filename.lower().endswith('.keras'):
+        return jsonify({'status':'error','message':'Envie um arquivo .keras'}),400
+
+    # _safe_name strips the extension; re-add it so the saved file stays loadable.
+    target = os.path.join(MODELS_DIR, _safe_name(upload.filename) + '.keras')
+    try:
+        upload.save(target)
+    except Exception as e:
+        return jsonify({'status':'error','message':f'falha ao salvar modelo: {e}'}),500
+
+    # Activate the uploaded model and force a load now so the operator gets an
+    # immediate, actionable result (e.g. an incompatible-architecture error)
+    # instead of a silent failure on the first inference request.
+    _set_sensemodel_path(target)
+    runtime = _load_sensemodel_runtime()
+    info = _sensemodel_info()
+    if runtime['error']:
+        return jsonify({
+            'status':'error',
+            'message':f'Modelo salvo, mas falhou ao carregar: {runtime["error"]}',
+            **info,
+        }),400
+    return jsonify({
+        'status':'ok',
+        'message':f'Modelo {info["name"]} carregado',
+        **info,
+    })
+
+@app.route('/api/inspect-deviation', methods=['POST'])
+def api_inspect_deviation():
+    refresh_clips()
+    if not CLIPS:
+        return jsonify({'status':'error','message':'nenhum clipe disponivel'}),400
+    body = request.get_json(silent=True) or {}
+    count = body.get('count', 'all')
+    # 'all'/0/negative -> every clip; otherwise the first N clips.
+    if isinstance(count, str) and count.strip().lower() in ('all', 'todos', ''):
+        indices = list(range(len(CLIPS)))
+    else:
+        try:
+            n = int(count)
+        except (TypeError, ValueError):
+            return jsonify({'status':'error','message':'count invalido'}),400
+        indices = list(range(len(CLIPS))) if n <= 0 else list(range(min(n, len(CLIPS))))
+
+    try:
+        play_fps = float(body.get('play_fps') or INSPECT_PLAY_FPS)
+    except (TypeError, ValueError):
+        play_fps = INSPECT_PLAY_FPS
+
+    try:
+        result = export_deviation_set(indices, play_fps=play_fps)
+    except Exception as e:
+        return jsonify({'status':'error','message':str(e)}),503
+    return jsonify(result)
+
+@app.route('/api/reset-model', methods=['POST'])
+def api_reset_model():
+    _set_sensemodel_path(SENSECV_MODEL_PATH)
+    runtime = _load_sensemodel_runtime()
+    info = _sensemodel_info()
+    if runtime['error']:
+        return jsonify({'status':'error','message':runtime['error'], **info}),400
+    return jsonify({
+        'status':'ok',
+        'message':f'Modelo padrão restaurado ({info["name"]})',
+        **info,
+    })
+
 @app.route('/api/clips')
 def api_clips():
     refresh_clips()
@@ -3130,7 +3506,11 @@ def api_suggest(idx):
     except ValueError as e:
         return jsonify({'found':False, 'error':str(e)}),400
     if mode == 'lateral':
-        return jsonify(_suggestion_with_ssim(idx, suggest_lateral_deviation(idx), threshold=threshold, metric=metric))
+        # Viewer "Desvio lateral" button: use the PDF-based deviation cut
+        # (decisão window T1-Δ→T1 by default), not the old lateral-velocity
+        # heuristic. Returns found:false when the IMU finds no desvio, so
+        # runAutoSuggest() falls back to walking/vertical for those clips.
+        return jsonify(_suggestion_with_ssim(idx, suggest_deviation_cut(idx), threshold=threshold, metric=metric))
     if mode not in ('vertical', 'walking'): mode = 'vertical'
     return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, mode), threshold=threshold, metric=metric))
 

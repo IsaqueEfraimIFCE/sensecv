@@ -5,6 +5,83 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-18] change | viewer "Desvio lateral" button uses the PDF cut
+- `/api/suggest?mode=lateral` now routes to `suggest_deviation_cut` (PDF decisão
+  window T1-Δ→T1), matching the deviation export. Clips with no IMU desvio
+  return `found:false`, so `runAutoSuggest` falls back to walking/vertical.
+  `suggest_lateral_deviation` now backs only the batch/manifest lateral exports.
+- Verified: `/api/suggest/0?mode=lateral` → found, [1.471, 2.471], window
+  decisao, side LEFT, SSIM enrichment intact. Frontend unchanged (it reads
+  start/end/ssim/has_vertical/message, not mode).
+- Pages touched: [[crop-suggestion]], [[api-routes]].
+
+## [2026-06-18] feat | deviation cut follows the criterios PDF (T1-Δ→T1)
+- Added `suggest_deviation_cut(idx)`: takes the strongest `desvio` from
+  `detect_imu_events` and returns a PDF §2.2 label window around T1/T2. Default
+  `SENSECV_DEVIATION_CUT_WINDOW=decisao` → `[T1-Δ, T1]`, the "decisão visual"
+  scene before the body reacts (PDF's recommended target for a predictive CNN;
+  user-chosen). `acao` / `expandido` also available. Side comes from the same
+  event so cut and label stay consistent.
+- `export_set` gained `mode='deviation'`; the deviation export
+  (`/api/inspect-deviation`) now cuts with this PDF window instead of
+  `suggest_lateral_deviation`, and drops the old `_clip_deviation_side` helper.
+- Verified: clip 01 t1=2.471 → cut [1.471, 2.471]; 6 clips exported with the
+  full common-export folder content (mp4 + frames/accel/rotation json + ssim),
+  validation.mp4 30 fps / 174 frames.
+- Pages touched: [[crop-suggestion]], [[imu-event-labeling]], [[api-routes]].
+
+## [2026-06-18] fix+rework | inspection video uses suggested cut + sensor side
+- Reworked `/api/inspect-deviation` to drop the ML model entirely. Each clip now
+  contributes **exactly its `suggest_lateral_deviation` cut**, labelled with the
+  **sensor** deviation side from `detect_imu_events` (`_clip_deviation_side`:
+  desvio direction esquerda/direita→LEFT/RIGHT, none→NONE). Title card + banner
+  per cut; output cadence `play_fps` (default `SENSECV_INSPECT_FPS=15`).
+- Fixed two latent bugs surfaced by the rework:
+  - **`KeyError: '<clip name>'`** during long runs. `find_clips()` did
+    `CLIP_PATHS.clear()` + repopulate; with `threaded=True`, the 5 s
+    `/api/export-state` poll cleared the shared maps mid-rebuild while the
+    inspection loop indexed them. Now `find_clips()` builds local dicts and
+    **swaps the globals atomically** — readers see old or new, never empty.
+  - **`_centered_rolling_mean` was undefined** (lost in restoration), so
+    `detect_imu_events` / `/api/imu-events` raised `NameError`. Defined it as a
+    list-tolerant centered moving average next to `_moving_average`.
+- Verified (venv, TF present but unused): count=8 → 384 frames, 15 fps, 720×720;
+  sides LEFT×3 RIGHT×5; `/api/imu-events/0` and `/api/sensemodel/0` still 200.
+- Pages touched: [[api-routes]], [[imu-event-labeling]].
+
+## [2026-06-18] feat | deviation inspection video (N clips or all)
+- New `POST /api/inspect-deviation` `{count: N|"all", sample_fps?}` builds one
+  stitched MP4 over the chosen clips with the active `.keras` model. Each clip
+  is preceded by a title card naming its **dominant deviation**
+  (`LEFT/RIGHT/NONE`, majority vote via `_dominant_label`) and every sampled
+  frame carries the live `Desvio`/`Obstaculo` overlay (`_draw_label_bar`).
+  Output `data/derived/deviation_inspection.mp4`; no `exports/`/history writes.
+- Refactored the shared inference path into `_sensemodel_preprocess()` +
+  `_split_head_arrays()` (reused by `sensemodel_frame_classification` and the
+  new batched builder). Added `INSPECT_SAMPLE_FPS`/`SENSECV_INSPECT_FPS`.
+- `templates/index.html`: new "Vídeo de inspeção (desvio)" panel with an
+  "Inspecionar N" count input and "Todos" button (`runInspect`).
+- Verified with the venv Python (TF 2.17): count=2 → 720×720, 4 fps, 69 frames,
+  clip 01 NONE, clip 02 LEFT+OBSTACLE; output MP4 decodes in OpenCV.
+- Pages touched: [[api-routes]].
+
+## [2026-06-18] feat | upload any .keras model at runtime
+- Made the SenseCV live model swappable without restarting Flask. The active
+  path now lives in `_sensemodel_runtime['path']` (default still
+  `SENSECV_MODEL_PATH` → `best_model.keras`); `_set_sensemodel_path()` resets
+  the cached model and the per-frame prediction cache.
+- New routes: `POST /api/upload-model` (saves to `data/models/`, activates and
+  eagerly loads the upload), `POST /api/reset-model`, `GET /api/sensemodel-info`.
+  Added `SENSECV_MODELS_DIR` (default `data/models`). `/api/sensemodel` now
+  echoes the active `model` name.
+- `templates/index.html`: SenseCV panel shows "Modelo ativo: <name>" and a
+  **Trocar modelo / Padrão** upload row; `swapModel()` posts the file, relabels
+  the panel, and re-runs inference on the current frame.
+- Verified via Flask test client: info reports the default; a bogus upload saves
+  with a sanitized name and returns an actionable load error (400); reset
+  restores `best_model.keras`.
+- Pages touched: [[api-routes]], [[dronet-live-classification]].
+
 ## [2026-06-16] fix | sensemodel preprocessing (raw 0-255, not /255)
 - `/api/sensemodel` returned near-constant predictions. Cause: the exported
   model is MobileNetV2 with an embedded `Rescaling(1/127.5, -1)` layer, so it

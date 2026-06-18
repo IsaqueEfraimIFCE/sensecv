@@ -2,7 +2,7 @@
 type: concept
 tags: [algorithm, workflow]
 code_refs: [app.py, templates/index.html]
-updated: 2026-06-11
+updated: 2026-06-18
 ---
 
 # Crop suggestion
@@ -16,9 +16,15 @@ a clip so the operator rarely sets markers by hand. Exposed at
 |---|---|---|
 | `vertical` | [[orientation-detection]] `vertical` | first sustained portrait period; the broader setup-to-end proposal |
 | `walking` (auto) | exported history first; otherwise `vertical AND walking` ([[walking-detection]]) | walking-only crop that matches known exports and falls back to detector logic for new clips |
-| `lateral` | relative phone roll from accelerometer gravity direction | strongest sustained intentional left/right phone tilt over 1 s |
+| `lateral` | IMU deviation event (PDF, see below) | the deviation cut from `suggest_deviation_cut` — `decisao` window `[T1-Δ, T1]` by default |
 
-## Lateral deviation (`mode='lateral'`)
+> **As of 2026-06-18** the viewer's "Desvio lateral" button and
+> `/api/suggest?mode=lateral` route to **`suggest_deviation_cut`** (the PDF cut,
+> next section), not the roll/velocity heuristic below. The heuristic
+> `suggest_lateral_deviation` now only backs the **batch** and **manifest**
+> lateral exports (`export_set(mode='lateral')`, `export_manifest_clip`).
+
+## Lateral deviation heuristic (`suggest_lateral_deviation`, batch/manifest only)
 Current implementation: `suggest_lateral_deviation(idx)` reads `frames.json`
 and `accelerations.json`, interpolates acceleration onto frame timestamps,
 estimates phone roll with configurable `atan2(num_axis, den_axis)` axes
@@ -103,6 +109,29 @@ button in [[viewer-frontend]]. Calibration scratchpad: `_debug_lateral.py`
 in the project root — extend its `GT` list when more deviation cuts get
 exported and re-run to compare candidate features.
 
+## PDF-based deviation cut (`suggest_deviation_cut`)
+The viewer's "Desvio lateral" button (`/api/suggest?mode=lateral`) **and** the
+deviation export/validation feature ([[api-routes]] `/api/inspect-deviation`,
+`export_set(mode='deviation')`) both use `suggest_deviation_cut(idx)`, which
+follows the criterios PDF
+(`criterios_imu_video_orientando`, see [[imu-event-labeling]]): it takes the
+strongest `desvio` event from `detect_imu_events` — physical start **T1**, return
+to a stabilized trajectory **T2** — and returns one of the PDF §2.2 label
+windows:
+
+| window | range | intent |
+|---|---|---|
+| `decisao` (default) | `[T1-Δ, T1]` | the scene **before** the body reacts; PDF's recommended target for a predictive CNN (§2.1/§10 "regra de ouro") |
+| `acao` | `[T1, T2]` | the deviation execution |
+| `expandido` | `[T1-Δ, T2+margem]` | both, robust to sync uncertainty |
+
+`Δ` = `SENSECV_IMU_EVENT_DELTA_SEC` (default 1.0 s), `margem` =
+`SENSECV_IMU_EXPANDED_MARGIN_SEC` (0.3 s); the window is chosen with
+`SENSECV_DEVIATION_CUT_WINDOW` (default `decisao`). The side (`LEFT`/`RIGHT`)
+is the event's own `direction`, so cut and label are always consistent. Clips
+with no `desvio` return `found:false` and are skipped by the exporter. This is
+the cut written by `export_set(mode='deviation')`.
+
 ## Horizontal (walking-only) clips
 Clips from the extra input roots (the `SenseCV-*` folders, tracked in
 `app.py` `WALKING_ONLY`) are filmed **horizontally the whole time**, so
@@ -165,7 +194,9 @@ images remain for dataset composition.
 ## UI integration ([[viewer-frontend]])
 - Auto-suggest: `loadClip()` calls `runAutoSuggest()`, which tries `lateral`
   first, then `walking`, then `vertical`. The user preference is to start with
-  the desvio-lateral cut and only use other selections as fallbacks.
+  the desvio-lateral cut and only use other selections as fallbacks. Since
+  `lateral` is now the PDF cut, clips with **no** IMU desvio return
+  `found:false` and auto-suggest falls through to `walking`/`vertical`.
 - Three buttons ("Vertical", "Vertical + andando", "Desvio lateral") re-run on
   demand through one `runSuggest(mode)` with a stale-request guard.
 

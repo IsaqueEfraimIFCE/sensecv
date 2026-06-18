@@ -2,7 +2,7 @@
 type: entity
 tags: [backend, api, http]
 code_refs: [app.py]
-updated: 2026-06-15
+updated: 2026-06-18
 ---
 
 # API routes
@@ -20,12 +20,16 @@ integer index into the current `CLIPS` list.
 | GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], quality, name, index, total}`; cached |
 | GET | `/api/dronet/<int:idx>?time=&exact=` | JSON | Live DroNet steering/yaw/collision for a requested video time. See [[dronet-live-classification]] |
 | GET | `/api/sensemodel/<int:idx>?time=&exact=` | JSON | Live two-head SenseCV `.keras` obstacle/deviation prediction for a requested frame |
+| GET | `/api/sensemodel-info` | JSON | Active `.keras` model `{name, path, exists, is_default, default_name, loaded, error}` |
+| POST | `/api/upload-model` | JSON | Uploads a `.keras` file to `data/models/`, makes it the active model, and loads it now |
+| POST | `/api/reset-model` | JSON | Reverts the active model to the `SENSECV_MODEL_PATH` default |
+| POST | `/api/inspect-deviation` | JSON | Builds one MP4 of each clip's suggested lateral cut, labelled by the sensor deviation side (no ML). See below |
 | GET | `/api/clips` | JSON | `{clips[], groups[], total}` after `refresh_clips()` |
 | POST | `/api/upload-zip` | JSON | Imports a SenseCV-style `.zip`, refreshes clips, returns `{status,dataset,clips_added,clips,groups,total}` |
 | GET | `/api/history` | JSON | Pruned contents of [[history-json]] |
 | GET | `/api/export-state` | JSON | Refreshes clips and returns clips/groups/history/export folders/next number |
 | GET | `/api/next-number` | JSON | `{number}` from actual export folders |
-| GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `vertical` / `walking` / `lateral`. See [[crop-suggestion]] |
+| GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `vertical` / `walking` / `lateral`. `lateral` is the PDF deviation cut (`suggest_deviation_cut`). See [[crop-suggestion]] |
 | GET | `/api/ssim/<int:idx>?start=&end=` | JSON | Full SSIM frame selection for a crop, including selected frame metadata and thumbnail URLs |
 | GET | `/api/imu-events/<int:idx>?delta=` | JSON | IMU capture-quality verdict plus desvio/reducao/parada events with T1/T2, label windows, and confidence. See [[imu-event-labeling]] |
 | POST | `/api/crop` | JSON | Performs the export. See [[export-pipeline]] |
@@ -39,16 +43,83 @@ Live inference for the local two-head SenseCV `.keras` model. The model path
 defaults to `best_model.keras` and is overridable with `SENSECV_MODEL_PATH`.
 Heads are matched by output width (2 → obstacle `NONE/OBSTACLE`, 3 → deviation
 `LEFT/RIGHT/NONE`); the frame is resized to the model's own input shape. The
-exported model is **MobileNetV2 with an embedded `Rescaling` layer**
+default exported model is **MobileNetV2 with an embedded `Rescaling` layer**
 (`scale=1/127.5, offset=-1`), so the route feeds **raw 0–255 RGB pixels** — do
 NOT divide by 255 first, or the input range collapses and every frame yields a
 near-constant prediction. Color is BGR→RGB; input is 224×224×3. The
-response carries `obstacle_label`, `obstacle_prob`, `deviation_label`,
-`deviation_prob`, and the raw `obstacle_probs` / `deviation_probs` vectors. Like
-DroNet, it lazy-loads TensorFlow and degrades gracefully — a missing model file
-or absent TensorFlow returns `{available:false, error}` with 503 rather than
-crashing. **Note:** this restoration has no `.keras` model file, so the route
-currently always returns the controlled error until a model is provided.
+response carries `model` (active file name), `obstacle_label`, `obstacle_prob`,
+`deviation_label`, `deviation_prob`, and the raw `obstacle_probs` /
+`deviation_probs` vectors. Like DroNet, it lazy-loads TensorFlow and degrades
+gracefully — a missing model file or absent TensorFlow returns
+`{available:false, error}` with 503 rather than crashing.
+
+### Swapping the model (`/api/upload-model`, `/api/reset-model`)
+The active model is not fixed: the viewer's **SenseCV (.keras)** panel can upload
+any `.keras` file to replace the default at runtime, without restarting Flask.
+
+- `POST /api/upload-model` (multipart `model`/`file`) saves the upload under
+  `data/models/` with a sanitized `<name>.keras`, points `_sensemodel_runtime`
+  at it via `_set_sensemodel_path()` (which clears the cached model **and** the
+  per-frame prediction cache), and eagerly loads it so an incompatible
+  architecture surfaces immediately as `status:"error"` (HTTP 400) instead of
+  failing silently on the next inference.
+- `POST /api/reset-model` swaps back to the `SENSECV_MODEL_PATH` default.
+- `GET /api/sensemodel-info` reports the active `{name, path, exists,
+  is_default, default_name, loaded, error}`; the frontend calls it on load to
+  label the panel.
+
+Any output-width contract still applies: the new model's heads are read by width
+(2 → obstacle, 3 → deviation), so an arbitrary `.keras` works best when it
+matches that two-head shape. `SENSECV_MODELS_DIR` overrides the upload folder.
+
+## `/api/inspect-deviation`
+Builds a single **deviation inspection video** — **no ML model is used**. Body
+`{count}` selects the clips: an integer `N` → the first `N` of `CLIPS`,
+`"all"`/`"todos"`/`0` → every clip. Optional `play_fps` (default
+`SENSECV_INSPECT_FPS`, `15`) sets the output playback cadence.
+
+**Only clips with a detected deviation are exported**; the suggested cut and the
+side come from the same IMU event (`suggest_deviation_cut(idx)`, see
+[[crop-suggestion]] and [[imu-event-labeling]]). Per the criterios PDF §2.2 the
+default cut is the **decisão visual** window `[T1-Δ, T1]` — the scene just before
+the body reacts, the PDF's recommended target for a predictive CNN
+(`SENSECV_DEVIATION_CUT_WINDOW` = `decisao` | `acao` | `expandido`). The side is
+the event `direction` (`esquerda`→`LEFT`, `direita`→`RIGHT`); clips with no
+`desvio` are skipped as NONE.
+
+Two outputs:
+1. **Real exports** — each kept clip's cut is exported with `export_set`
+   (`mode='deviation'`), producing the **exact same files as a common export**
+   (clean cut MP4 + sensors + ssim, no overlay) under
+   `data/derived/deviation_exports/<clip>/`.
+2. **One validation video** — `_write_validation_video` concatenates the
+   exported cuts at a constant 30 fps (`SENSECV_INSPECT_FPS`; all frames
+   back-to-back, **no title cards / transitions**, playback runs faster than
+   real time by design) with a `Desvio: <side>` banner burned in
+   (`_draw_label_bar`). **The header exists only in this video.**
+
+Nothing touches `exports/` or [[history-json]].
+
+The builder runs in two phases: **(1)** snapshot each clip's video path, cut
+window and deviation side up front; **(2)** render. Phase 1 isolates all
+`CLIPS`/`CLIP_PATHS` access from the long render loop (see the race note below).
+
+```jsonc
+{ "status": "ok", "requested": 6, "exported": 6, "skipped_none": 0,
+  "counts": { "LEFT": 3, "RIGHT": 3 },
+  "out_dir": ".../data/derived/deviation_exports",
+  "csv_url": "/derived-file/deviation_exports/sources.csv",
+  "validation_url": "/derived-file/deviation_exports/validation.mp4",
+  "validation_frames": 174, "play_fps": 30.0,
+  "clips": [
+    { "clip": ".../01", "status": "exported", "deviation": "LEFT",
+      "start": 1.471, "end": 2.471, "t1": 2.471, "t2": 2.877,
+      "window": "decisao", "confidence": "baixa", "export_folder": "..._01" } ] }
+```
+
+Per-clip `status` is `exported`, `skipped_no_deviation`, or `export_failed`.
+Absent ffmpeg/OpenCV or no deviation clip at all returns
+`{status:"error", message}` (503).
 
 ## `/api/manifest-export`
 Re-implemented from the documented behavior after the original Desktop code was

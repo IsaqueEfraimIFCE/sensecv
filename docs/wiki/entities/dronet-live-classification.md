@@ -139,3 +139,14 @@ Latest local verification:
 
 Interpretation caveat: DroNet outputs are inspection signals from an outdoor
 navigation model, not validated indoor SenseCV labels.
+
+## Sibling SenseCV (.keras) panel
+
+Directly under the DroNet panel, the viewer shows a **SenseCV (.keras)** panel
+driven by `/api/sensemodel`. It shares the same play/pause/scrub triggers
+(`requestDronet()` also calls `requestSensemodel()`), but its model is
+**swappable at runtime**: the panel's *Trocar modelo* / *Padrão* row uploads any
+`.keras` file (`POST /api/upload-model`, saved to `data/models/`) or reverts to
+the `SENSECV_MODEL_PATH` default (`POST /api/reset-model`). The active model name
+is shown as "Modelo ativo" and is fetched on load via `/api/sensemodel-info`.
+See [[api-routes]] for the request/response contract.
