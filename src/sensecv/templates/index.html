@@ -40,9 +40,11 @@ header h1{font-size:15px;font-weight:600}
 
 /* ── Video ── */
 /* The wrapper has a fixed visible box; the video element is absolutely
-   positioned inside it and rotated 90° via JS (applyVideoOrientation), so the
-   rotated rectangle exactly fits the wrapper. clip-vertical (supermarket)
-   shows a portrait box; clip-horizontal (SenseCV) shows a landscape box. */
+   positioned inside it. applyVideoOrientation() measures the frame the browser
+   actually paints (rotation tag already honored) and rotates 90° *only* when it
+   doesn't already match the desired orientation — so clips that are already
+   upright are left alone. clip-vertical (supermarket) shows a portrait box;
+   clip-horizontal (SenseCV) shows a landscape box. */
 .video-wrapper{background:#000;position:relative;width:100%;overflow:hidden}
 body.clip-vertical  .video-wrapper{height:80vh}
 body.clip-horizontal .video-wrapper{height:55vh}
@@ -614,24 +616,36 @@ let sensemodelPendingExact = null;
 let sensemodelLastKey = null;
 let sensemodelSeq = 0;
 
-// ═══ Video orientation (rotate-90° fit) ═════════
-// The wrapper has a fixed box (portrait for supermarket, landscape for SenseCV).
-// We size the video element to (wrapper.height × wrapper.width) and rotate 90°,
-// so its rotated bounding box exactly fills the wrapper with no letterboxing.
-// Supermarket pixels are landscape with no rotation tag (content sideways) →
-// rotate +90° CW to upright them as portrait. SenseCV pixels are landscape with
-// a 90° CW rotation tag the browser already honors → counter-rotate -90° to
-// see them landscape again.
+// ═══ Video orientation (measured, per-video) ════
+// Desired display orientation for the active clip: supermarket footage is shown
+// portrait, every other dataset landscape. Set per clip in loadClip().
+let wantPortrait = true;
+// Decide rotation from the frame the BROWSER actually paints (videoWidth/Height
+// already reflect any rotation tag). We rotate 90° only when that painted frame
+// doesn't match what we want — so a single dataset that mixes tagged and
+// untagged clips no longer rotates the ones that are already upright.
+// When rotating, we size the element to (wrapper.height × wrapper.width) so its
+// rotated bounding box fills the wrapper; otherwise it fits the box normally.
 function applyVideoOrientation(){
   const wrap = document.querySelector('.video-wrapper');
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (!w || !h) return;
-  video.style.width  = h + 'px';
-  video.style.height = w + 'px';
-  const deg = document.body.classList.contains('clip-vertical') ? 90 : -90;
-  video.style.transform = `translate(-50%,-50%) rotate(${deg}deg)`;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const paintedPortrait = (vw && vh) ? vh > vw : wantPortrait;
+  const square = !!(vw && vh) && vw === vh;
+  if (!square && paintedPortrait !== wantPortrait){
+    video.style.width  = h + 'px';
+    video.style.height = w + 'px';
+    video.style.transform = `translate(-50%,-50%) rotate(${wantPortrait ? 90 : -90}deg)`;
+  } else {
+    video.style.width  = w + 'px';
+    video.style.height = h + 'px';
+    video.style.transform = 'translate(-50%,-50%)';
+  }
 }
 window.addEventListener('resize', applyVideoOrientation);
+// videoWidth/Height are 0 until metadata loads, so re-run once they're known.
+video.addEventListener('loadedmetadata', applyVideoOrientation);
 
 // ═══ Overlay ════════════════════════════════════
 const showOverlay = msg => {
@@ -729,13 +743,14 @@ async function loadClip(idx) {
 
   // Supermercado (primary root) clips have bare names; extra-root clips are
   // prefixed with their dataset folder (e.g. "SenseCV-27-05-2026-IFCE/01").
-  // Supermarket files are landscape-encoded with no rotation tag (phone was
-  // held vertical → content is sideways); we rotate 90° CW to make it portrait.
-  // SenseCV files carry a 90° CW rotation tag the browser already honors
-  // (showing them portrait); we counter-rotate so they appear landscape again.
+  // Supermarket footage is shown portrait, every other dataset landscape. The
+  // actual 90° correction (and whether any is needed at all) is decided per
+  // video from the painted frame in applyVideoOrientation(), so clips that are
+  // already upright — even within the same dataset — are left untouched.
   const isSupermercado = !CLIPS[idx].includes('/');
-  document.body.classList.toggle('clip-vertical',   isSupermercado);
-  document.body.classList.toggle('clip-horizontal', !isSupermercado);
+  wantPortrait = isSupermercado;
+  document.body.classList.toggle('clip-vertical',   wantPortrait);
+  document.body.classList.toggle('clip-horizontal', !wantPortrait);
   applyVideoOrientation();
 
   video.pause();

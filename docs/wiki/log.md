@@ -5,6 +5,19 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-18] fix | video orientation is measured per-video, not per-folder
+- `applyVideoOrientation` no longer force-rotates every clip ±90° from its path.
+  It now reads the browser-painted `video.videoWidth/Height` (rotation tag
+  already honored) and rotates 90° only when the painted orientation differs
+  from `wantPortrait` (supermarket → portrait, else landscape). Square frames
+  and already-upright clips are left alone. Added a `loadedmetadata` listener so
+  the decision uses real dimensions; `loadClip` sets `wantPortrait`.
+- Fixes a mixed dataset where some clips carry a rotation tag and others don't:
+  the old single-bucket −90° rotated the already-correct ones sideways.
+- Not reproducible locally (raw source videos are gitignored); fix is measured/
+  defensive and preserves the supermarket and tagged-SenseCV cases.
+- Pages touched: [[viewer-frontend]].
+
 ## [2026-06-18] change | viewer "Desvio lateral" button uses the PDF cut
 - `/api/suggest?mode=lateral` now routes to `suggest_deviation_cut` (PDF decisão
   window T1-Δ→T1), matching the deviation export. Clips with no IMU desvio
