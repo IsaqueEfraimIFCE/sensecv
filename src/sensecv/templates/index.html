@@ -616,35 +616,29 @@ let sensemodelPendingExact = null;
 let sensemodelLastKey = null;
 let sensemodelSeq = 0;
 
-// ═══ Video orientation (measured, per-video) ════
+// ═══ Video orientation (tag-driven, per-video) ══
 // Desired display orientation for the active clip: supermarket footage is shown
 // portrait, every other dataset landscape. Set per clip in loadClip().
 let wantPortrait = true;
-// Decide rotation from the frame the BROWSER actually paints (videoWidth/Height
-// already reflect any rotation tag). We rotate 90° only when that painted frame
-// doesn't match what we want — so a single dataset that mixes tagged and
-// untagged clips no longer rotates the ones that are already upright.
-// When rotating, we size the element to (wrapper.height × wrapper.width) so its
-// rotated bounding box fills the wrapper; otherwise it fits the box normally.
+// The browser already rotates each frame by the file's container rotation tag
+// (`DATA.video_rotation`, served from the backend). Square or wrongly-tagged
+// gimbal clips end up on their side because of it. We compute the net CSS
+// rotation that (a) undoes that tag and (b) adds the supermarket portrait
+// correction:  deg = (wantPortrait ? 90 : 0) - videoRotation.
+// Subtracting each clip's *own* tag is what makes a dataset that mixes tagged
+// and untagged clips all come out upright.
+let videoRotation = 0;
 function applyVideoOrientation(){
   const wrap = document.querySelector('.video-wrapper');
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (!w || !h) return;
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const paintedPortrait = (vw && vh) ? vh > vw : wantPortrait;
-  const square = !!(vw && vh) && vw === vh;
-  if (!square && paintedPortrait !== wantPortrait){
-    video.style.width  = h + 'px';
-    video.style.height = w + 'px';
-    video.style.transform = `translate(-50%,-50%) rotate(${wantPortrait ? 90 : -90}deg)`;
-  } else {
-    video.style.width  = w + 'px';
-    video.style.height = h + 'px';
-    video.style.transform = 'translate(-50%,-50%)';
-  }
+  let deg = (((wantPortrait ? 90 : 0) - videoRotation) % 360 + 360) % 360;
+  const swap = (deg === 90 || deg === 270);   // rotated rect needs swapped box
+  video.style.width  = (swap ? h : w) + 'px';
+  video.style.height = (swap ? w : h) + 'px';
+  video.style.transform = `translate(-50%,-50%) rotate(${deg}deg)`;
 }
 window.addEventListener('resize', applyVideoOrientation);
-// videoWidth/Height are 0 until metadata loads, so re-run once they're known.
 video.addEventListener('loadedmetadata', applyVideoOrientation);
 
 // ═══ Overlay ════════════════════════════════════
@@ -744,11 +738,11 @@ async function loadClip(idx) {
   // Supermercado (primary root) clips have bare names; extra-root clips are
   // prefixed with their dataset folder (e.g. "SenseCV-27-05-2026-IFCE/01").
   // Supermarket footage is shown portrait, every other dataset landscape. The
-  // actual 90° correction (and whether any is needed at all) is decided per
-  // video from the painted frame in applyVideoOrientation(), so clips that are
-  // already upright — even within the same dataset — are left untouched.
+  // net rotation also undoes each clip's container tag (videoRotation, set from
+  // DATA.video_rotation below), so square/tagged clips don't lie on their side.
   const isSupermercado = !CLIPS[idx].includes('/');
   wantPortrait = isSupermercado;
+  videoRotation = 0;   // updated once DATA arrives; re-applied then
   document.body.classList.toggle('clip-vertical',   wantPortrait);
   document.body.classList.toggle('clip-horizontal', !wantPortrait);
   applyVideoOrientation();
@@ -760,6 +754,8 @@ async function loadClip(idx) {
   const resp = await fetch(`/api/data/${idx}`);
   DATA = await resp.json();
   currentIdx = idx;
+  videoRotation = DATA.video_rotation || 0;
+  applyVideoOrientation();
 
   document.getElementById('clip-pos').textContent       = idx + 1;
   document.getElementById('hdr-name').textContent        = DATA.name;

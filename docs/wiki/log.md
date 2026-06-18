@@ -5,18 +5,18 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
-## [2026-06-18] fix | video orientation is measured per-video, not per-folder
-- `applyVideoOrientation` no longer force-rotates every clip ±90° from its path.
-  It now reads the browser-painted `video.videoWidth/Height` (rotation tag
-  already honored) and rotates 90° only when the painted orientation differs
-  from `wantPortrait` (supermarket → portrait, else landscape). Square frames
-  and already-upright clips are left alone. Added a `loadedmetadata` listener so
-  the decision uses real dimensions; `loadClip` sets `wantPortrait`.
-- Fixes a mixed dataset where some clips carry a rotation tag and others don't:
-  the old single-bucket −90° rotated the already-correct ones sideways.
-- Not reproducible locally (raw source videos are gitignored); fix is measured/
-  defensive and preserves the supermarket and tagged-SenseCV cases.
-- Pages touched: [[viewer-frontend]].
+## [2026-06-18] fix | video orientation is tag-driven (undoes container rotation)
+- Backend `_video_rotation(idx)` reads each clip's display rotation tag (cv2
+  `CAP_PROP_ORIENTATION_META`) and `get_clip_data` returns it as
+  `video_rotation`. The viewer computes `deg = (wantPortrait ? 90 : 0) -
+  videoRotation`, undoing the tag the browser already applied plus the
+  supermarket portrait correction. `loadClip` sets `wantPortrait`/`videoRotation`
+  (reset then updated from `/api/data`); also re-runs on `loadedmetadata`/resize.
+- Supersedes the same-day measurement attempt, which skipped square frames: the
+  IFCE gimbal set is 231 clips, all 720×720 (174 square / 57 portrait) with a
+  90° tag, so dimensions can't orient them but the tag can. Verified
+  `get_clip_data(0..3)` → video_rotation=90 → css deg=270 (−90°), upright.
+- Pages touched: [[viewer-frontend]], [[api-routes]].
 
 ## [2026-06-18] change | viewer "Desvio lateral" button uses the PDF cut
 - `/api/suggest?mode=lateral` now routes to `suggest_deviation_cut` (PDF decisão

@@ -383,6 +383,25 @@ SSIM_MAX_GAP_SEC = float(os.environ.get('SENSECV_SSIM_MAX_GAP_SEC', '0.5'))
 SSIM_REVIEW_FPS = float(os.environ.get('SENSECV_SSIM_REVIEW_FPS', '12'))
 SSIM_REVIEW_MAX_WIDTH = int(os.environ.get('SENSECV_SSIM_REVIEW_MAX_WIDTH', '960'))
 
+def _video_rotation(idx):
+    """Display-rotation tag (degrees CW) the browser will honor for this clip's
+    video, read from the container metadata. The viewer counter-rotates by this
+    so square/tagged clips are not shown on their side. Returns 0 if unknown."""
+    const = None
+    try:
+        import cv2
+        const = getattr(cv2, 'CAP_PROP_ORIENTATION_META', None)
+        if const is None:
+            return 0
+        cap = cv2.VideoCapture(clip_video_path(idx))
+        if not cap.isOpened():
+            return 0
+        rot = cap.get(const)
+        cap.release()
+        return int(round(rot)) % 360
+    except Exception:
+        return 0
+
 def get_clip_data(idx):
     key = CLIPS[idx]
     if key in _cache: _cache.move_to_end(key); return _cache[key]
@@ -401,7 +420,8 @@ def get_clip_data(idx):
           'accel':interp_at_times(at,av,ft),'rotation':interp_at_times(rt,rv,ft),
           'velocity':compute_velocities(acc_data,rot_data,ft.tolist()),
           'external_input':external_input_at_times(folder, ft),
-          'name':key,'index':idx,'total':len(CLIPS)}
+          'name':key,'index':idx,'total':len(CLIPS),
+          'video_rotation':_video_rotation(idx)}
     _cache[key]=data
     if len(_cache)>5: _cache.popitem(last=False)
     return data

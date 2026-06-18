@@ -17,7 +17,7 @@ integer index into the current `CLIPS` list.
 | GET | `/video/<int:idx>` | video/mp4 | Streams the clip's actual MP4 path; honors HTTP `Range` for seeking |
 | GET | `/frame/<int:idx>/<int:source_index>.jpg` | image/jpeg | Decodes one source frame as a thumbnail for SSIM frame review |
 | GET | `/export-file/<folder>/<path:relpath>` | file | Serves generated export files from an export folder |
-| GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], quality, name, index, total}`; cached |
+| GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], quality, name, index, total, video_rotation}`; cached. `video_rotation` is the clip's display-rotation tag in degrees CW (cv2 `CAP_PROP_ORIENTATION_META`); the viewer undoes it so square/tagged clips aren't shown sideways |
 | GET | `/api/dronet/<int:idx>?time=&exact=` | JSON | Live DroNet steering/yaw/collision for a requested video time. See [[dronet-live-classification]] |
 | GET | `/api/sensemodel/<int:idx>?time=&exact=` | JSON | Live two-head SenseCV `.keras` obstacle/deviation prediction for a requested frame |
 | GET | `/api/sensemodel-info` | JSON | Active `.keras` model `{name, path, exists, is_default, default_name, loaded, error}` |

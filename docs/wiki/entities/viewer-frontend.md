@@ -97,16 +97,18 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
 - **Export** - POSTs to `/api/crop`, then refreshes export state.
 
 ## Video orientation
-`applyVideoOrientation()` decides rotation **per video, measured** — not per
-folder. `loadClip()` sets `wantPortrait` (supermarket → portrait, every other
-dataset → landscape) and the `clip-vertical`/`clip-horizontal` box class. The
-function then reads the frame the browser actually paints (`video.videoWidth/
-Height`, which already honor any rotation tag) and rotates 90° **only when the
-painted orientation doesn't match `wantPortrait`**; already-upright clips and
-square frames are left alone. It runs on `loadClip()`, on `loadedmetadata` (when
-dimensions become known), and on `resize`. This replaced an earlier rule that
-force-rotated every clip ±90° by path, which left sideways clips inside a mixed
-dataset (some tagged, some not).
+`applyVideoOrientation()` rotates **per video, by the file's own tag**. The
+browser already rotates each frame by its container rotation tag, served as
+`DATA.video_rotation` (backend `_video_rotation()` via cv2
+`CAP_PROP_ORIENTATION_META`). The viewer computes the net CSS rotation
+`deg = (wantPortrait ? 90 : 0) - videoRotation`, which **undoes that tag** and
+adds the supermarket portrait correction. `loadClip()` sets `wantPortrait`
+(supermarket → portrait, else landscape) and the `clip-vertical`/
+`clip-horizontal` box; `videoRotation` is reset to 0 then updated when
+`/api/data` returns, re-running the function. It also runs on `loadedmetadata`
+and `resize`. Subtracting each clip's own tag is what makes a dataset that
+mixes tags come out upright — the IFCE gimbal set is 720×720 square with a 90°
+tag, so a dimension-only rule can't orient it; the tag can.
 
 ## Keyboard shortcuts
 `Space` play/pause; left/right seek 0.5 s (`Shift` = 5 s); `s` mark start;
