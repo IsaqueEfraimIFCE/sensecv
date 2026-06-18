@@ -8,33 +8,41 @@
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#0d1117;--panel:#161b22;--border:#30363d;
-  --text:#c9d1d9;--muted:#8b949e;--accent:#58a6ff;
-  --red:#f85149;--green:#56d364;--blue:#79c0ff;
-  --gold:#e3b341;--purple:#bc8cff;
+  --bg:#0b0f15;--panel:#151b24;--panel-2:#0e131b;--border:#2a323d;
+  --text:#e6edf3;--muted:#9aa6b2;--accent:#6cb0ff;--accent-strong:#388bfd;
+  --red:#ff6b61;--green:#5ed977;--blue:#86c5ff;
+  --gold:#ecc04a;--purple:#c79bff;
+  /* type scale */
+  --fs-xs:13px;--fs-sm:14px;--fs-base:16px;--fs-md:18px;--fs-lg:21px;--fs-xl:26px;
+  --radius:10px;--radius-sm:8px;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 16px rgba(0,0,0,.22);
 }
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh;display:flex;flex-direction:column}
+body{background:var(--bg);color:var(--text);
+  font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:var(--fs-base);line-height:1.5;letter-spacing:.01em;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;
+  min-height:100vh;display:flex;flex-direction:column}
 
 /* ── Header ── */
 header{background:var(--panel);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-header h1{font-size:15px;font-weight:600}
-.badge{background:#1f2937;border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--muted);white-space:nowrap}
-.clip-name-badge{color:var(--accent);font-size:12px;font-variant-numeric:tabular-nums}
+header h1{font-size:var(--fs-lg);font-weight:700;letter-spacing:-.01em}
+.badge{background:var(--panel-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 9px;font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.clip-name-badge{color:var(--accent);font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
 
 /* Clip nav */
 .clip-nav{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
-.nav-btn{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;transition:all .15s}
+.nav-btn{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s}
 .nav-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
 .nav-btn:disabled{opacity:.3;cursor:default}
-.clip-counter{font-size:12px;color:var(--muted);white-space:nowrap}
+.clip-counter{font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
 
-#group-select,#clip-select,#ssim-metric{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px}
-#group-select{max-width:190px}
-#clip-select{max-width:260px}
+#group-select,#clip-select,#ssim-metric{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:var(--fs-sm)}
+#group-select{max-width:210px}
+#clip-select{max-width:290px}
 #group-select:focus,#clip-select:focus{outline:none;border-color:var(--accent)}
 
 /* ── Layout ── */
-.main{display:grid;grid-template-columns:480px 1fr;flex:1;overflow:hidden}
+.main{display:grid;grid-template-columns:540px 1fr;flex:1;overflow:hidden}
 .left{border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto}
 .right{display:flex;flex-direction:column;overflow-y:auto}
 
@@ -49,24 +57,24 @@ header h1{font-size:15px;font-weight:600}
 body.clip-vertical  .video-wrapper{height:80vh}
 body.clip-horizontal .video-wrapper{height:55vh}
 #video{position:absolute;top:50%;left:50%;display:block;background:#000;object-fit:contain;transform-origin:center center}
-.timeline-bar{height:44px;background:#0a0a0f;border-top:1px solid var(--border);cursor:pointer}
+.timeline-bar{height:52px;background:#0a0a0f;border-top:1px solid var(--border);cursor:pointer}
 #timeline-canvas{width:100%;height:100%;display:block}
-.time-display{padding:5px 12px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.time-display{padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);font-size:var(--fs-sm);display:flex;align-items:center;justify-content:space-between;gap:10px}
 .time-display span{color:var(--accent);font-variant-numeric:tabular-nums}
-.play-btn{flex:none;background:#0a0a14;border:1px solid var(--border);color:var(--accent);border-radius:6px;min-width:34px;height:24px;cursor:pointer;font-size:12px;line-height:1;transition:all .15s}
+.play-btn{flex:none;background:#0a0a14;border:1px solid var(--border);color:var(--accent);border-radius:6px;min-width:40px;height:30px;cursor:pointer;font-size:var(--fs-sm);line-height:1;transition:all .15s}
 .play-btn:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
 
 /* ── Warning banner ── */
-.warn-banner{background:#3a1c1c;border-bottom:1px solid var(--red);color:var(--red);padding:7px 12px;font-size:12px;display:flex;align-items:center;gap:7px}
+.warn-banner{background:#3a1c1c;border-bottom:1px solid var(--red);color:var(--red);padding:9px 14px;font-size:var(--fs-sm);display:flex;align-items:center;gap:7px}
 .warn-banner.hidden{display:none}
 
 /* ── Sections ── */
 .section{padding:11px 14px;border-bottom:1px solid var(--border)}
-.section h3{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:9px}
+.section h3{font-size:var(--fs-sm);font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text);opacity:.92;margin-bottom:10px}
 
 /* ── Toggles ── */
 .toggle-row{display:flex;flex-wrap:wrap;gap:6px}
-.tog{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:20px;padding:3px 12px;cursor:pointer;font-size:12px;transition:all .15s}
+.tog{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:20px;padding:4px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s}
 .tog[data-ch="accel"]   {--tc:var(--red)}
 .tog[data-ch="rotation"]{--tc:var(--green)}
 .tog[data-ch="velocity"]{--tc:var(--purple)}
@@ -74,12 +82,12 @@ body.clip-horizontal .video-wrapper{height:55vh}
 
 /* ── Values ── */
 .vals-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.val-box{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:7px;text-align:center}
-.val-label{font-size:10px;color:var(--muted);margin-bottom:2px}
-.val-num{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums}
-.val-unit{font-size:9px;color:var(--muted);margin-top:1px}
+.val-box{background:var(--panel-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:11px 8px;text-align:center}
+.val-label{font-size:var(--fs-xs);color:var(--muted);margin-bottom:4px;letter-spacing:.02em}
+.val-num{font-size:var(--fs-xl);font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.val-unit{font-size:var(--fs-xs);color:var(--muted);margin-top:3px}
 .dronet-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px}
-.dronet-status{margin-top:7px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.dronet-status{margin-top:8px;font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums}
 .dronet-status.err{color:var(--red)}
 .dronet-status.ok{color:var(--muted)}
 .dronet-collision{border-color:var(--border)}
@@ -88,29 +96,29 @@ body.clip-horizontal .video-wrapper{height:55vh}
 
 /* ── Crop ── */
 .crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.crop-point{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:8px}
-.crop-point label{font-size:10px;color:var(--muted);display:block;margin-bottom:3px}
-.crop-time{font-size:13px;font-variant-numeric:tabular-nums}
-.set-btn{margin-top:5px;width:100%;padding:3px;font-size:11px;background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;transition:all .15s}
+.crop-point{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:10px}
+.crop-point label{font-size:var(--fs-xs);color:var(--muted);display:block;margin-bottom:4px}
+.crop-time{font-size:var(--fs-lg);font-weight:600;font-variant-numeric:tabular-nums}
+.set-btn{margin-top:7px;width:100%;padding:6px;font-size:var(--fs-sm);background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;transition:all .15s}
 .set-btn:hover{border-color:var(--accent);color:var(--accent)}
 #crop-start-box{border-color:#56d364}
 #crop-end-box{border-color:#f85149}
 
 /* ── Form ── */
 .form-row{display:flex;flex-direction:column;gap:5px;margin-top:8px}
-.form-row label{font-size:11px;color:var(--muted)}
-.form-row input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:13px;width:100%;font-variant-numeric:tabular-nums}
+.form-row label{font-size:var(--fs-xs);color:var(--muted);letter-spacing:.02em}
+.form-row input{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:8px 11px;font-size:var(--fs-sm);width:100%;font-variant-numeric:tabular-nums}
 .form-row input:focus{outline:none;border-color:var(--accent)}
 .form-row input.error{border-color:var(--red)!important}
 .ssim-control{display:grid;grid-template-columns:1fr 74px;gap:7px;align-items:center}
 .ssim-control input[type="range"]{padding:0;height:28px}
 .ssim-control input[type="number"]{padding:5px 7px;text-align:right}
-.input-hint{font-size:10px;color:var(--muted);margin-top:2px}
+.input-hint{font-size:var(--fs-xs);color:var(--muted);margin-top:3px}
 .input-hint.err{color:var(--red)}
 
 /* ── Radio chips ── */
 .radio-group{display:flex;flex-wrap:wrap;gap:5px}
-.rchip{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:12px;transition:all .15s;white-space:nowrap}
+.rchip{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);padding:6px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s;white-space:nowrap}
 .rchip:hover{border-color:var(--accent);color:var(--text)}
 .rchip.active{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent);font-weight:600}
 
@@ -121,36 +129,37 @@ body.clip-horizontal .video-wrapper{height:55vh}
 
 /* ── Buttons ── */
 .btn-row{display:flex;gap:6px;margin-top:8px}
-.btn{flex:1;padding:7px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;transition:all .15s}
-#btn-suggest,#btn-suggest-walk{background:#1a3a2a;border:1px solid #2d6a4f;color:#56d364}
-#btn-suggest:hover:not(:disabled),#btn-suggest-walk:hover:not(:disabled){background:#2d6a4f}
-#btn-suggest:disabled,#btn-suggest-walk:disabled{opacity:.6;cursor:default}
+.btn{flex:1;padding:8px 10px;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s}
+.btn:hover:not(:disabled){filter:brightness(1.08)}
+#btn-suggest-walk{background:#1a3a2a;border:1px solid #2d6a4f;color:#56d364}
+#btn-suggest-walk:hover:not(:disabled){background:#2d6a4f}
+#btn-suggest-walk:disabled{opacity:.6;cursor:default}
 #export-btn{background:#1d4ed8;color:#fff}
 #export-btn:hover:not(:disabled){background:#2563eb}
 #export-btn:disabled{opacity:.5;cursor:default}
 
 /* ── History ── */
-.history-list{display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto}
-.hist-item{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:7px 10px;cursor:pointer;transition:border-color .15s;font-size:11px}
+.history-list{display:flex;flex-direction:column;gap:5px;max-height:260px;overflow-y:auto}
+.hist-item{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:9px 12px;cursor:pointer;transition:border-color .15s;font-size:var(--fs-sm)}
 .hist-item:hover{border-color:var(--accent)}
-.hist-top{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:2px}
-.hist-num{font-weight:700;font-size:13px;color:var(--accent)}
-.hist-src{color:var(--muted);font-size:10px}
+.hist-top{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:3px}
+.hist-num{font-weight:700;font-size:var(--fs-md);color:var(--accent)}
+.hist-src{color:var(--muted);font-size:var(--fs-xs)}
 .hist-tags{display:flex;gap:4px;flex-wrap:wrap}
-.tag{background:var(--panel);border:1px solid var(--border);border-radius:3px;padding:1px 5px;font-size:10px}
+.tag{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:var(--fs-xs)}
 .tag.obs{border-color:#f85149;color:#f85149}
 .tag.sem{border-color:#56d364;color:#56d364}
 .tag.desvio{border-color:var(--gold);color:var(--gold)}
-.no-history{color:var(--muted);font-size:12px;padding:8px 0}
+.no-history{color:var(--muted);font-size:var(--fs-sm);padding:8px 0}
 
 /* ── Charts ── */
 .chart-block{border-bottom:1px solid var(--border);padding:12px 16px 8px}
 .chart-block.hidden{display:none}
 .chart-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-.chart-title{font-size:13px;font-weight:600}
-.chart-subtitle{font-size:11px;color:var(--muted);margin-left:6px}
+.chart-title{font-size:var(--fs-md);font-weight:600}
+.chart-subtitle{font-size:var(--fs-xs);color:var(--muted);margin-left:6px}
 .series-toggles{display:flex;gap:4px;flex-wrap:wrap}
-.stog{border:1px solid transparent;background:transparent;color:var(--muted);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;transition:all .15s}
+.stog{border:1px solid transparent;background:transparent;color:var(--muted);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s}
 .stog.on{background:color-mix(in srgb,var(--sc) 18%,transparent);border-color:var(--sc);color:var(--sc)}
 .stog[data-s="x"]    {--sc:var(--red)}
 .stog[data-s="y"]    {--sc:var(--green)}
@@ -161,14 +170,14 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .stog[data-s="vx"]   {--sc:var(--red)}
 .stog[data-s="vy"]   {--sc:var(--green)}
 .stog[data-s="vz"]   {--sc:var(--blue)}
-.chart-wrap{position:relative;height:155px}
+.chart-wrap{position:relative;height:190px}
 .chart-wrap canvas{position:absolute;inset:0}
 
 /* ── Quick-action bar under velocity chart ── */
 .quick-actions{padding:10px 16px 14px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
-.quick-actions .qa-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.quick-actions .qa-title{font-size:var(--fs-sm);font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .quick-actions .qa-row{display:flex;gap:6px;flex-wrap:wrap}
-.qa-btn{flex:1;min-width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.qa-btn{flex:1;min-width:130px;padding:10px 12px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:var(--fs-sm);font-weight:600;cursor:pointer;transition:all .15s}
 .qa-btn:hover{border-color:var(--accent);color:var(--accent)}
 .qa-btn.qa-start{border-color:#2d6a4f;color:#56d364}
 .qa-btn.qa-start:hover{background:color-mix(in srgb,#56d364 12%,transparent)}
@@ -178,7 +187,7 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .qa-btn.qa-export:hover:not(:disabled){background:#2563eb;border-color:#2563eb;color:#fff}
 .qa-btn.qa-export:disabled{opacity:.5;cursor:default}
 .quick-actions .qa-field{display:flex;flex-direction:column;gap:5px}
-.quick-actions .qa-field label{font-size:11px;color:var(--muted)}
+.quick-actions .qa-field label{font-size:var(--fs-xs);color:var(--muted)}
 .quick-actions .cond-obs,.quick-actions .cond-desvio{display:none}
 .quick-actions.show-obs    .cond-obs{display:flex}
 .quick-actions.show-desvio .cond-desvio{display:flex}
@@ -186,52 +195,113 @@ body.clip-horizontal .video-wrapper{height:55vh}
 /* ── Overlay ── */
 #overlay{position:fixed;inset:0;background:rgba(13,17,23,.88);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;z-index:100;transition:opacity .25s}
 #overlay.hide{opacity:0;pointer-events:none}
-#overlay-msg{font-size:14px;color:var(--muted)}
+#overlay-msg{font-size:var(--fs-md);color:var(--muted)}
 @keyframes spin{to{transform:rotate(360deg)}}
-.spinner{width:26px;height:26px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+.spinner{width:32px;height:32px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
 
 /* ── Toast ── */
-.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:9px 16px;font-size:13px;transition:transform .25s;z-index:200;pointer-events:none}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:11px 18px;font-size:var(--fs-sm);transition:transform .25s;z-index:200;pointer-events:none}
 .toast.show{transform:translateX(-50%) translateY(0)}
 .toast.ok {border-color:var(--green);color:var(--green)}
 .toast.err{border-color:var(--red);color:var(--red)}
 .upload-row{display:flex;gap:6px;align-items:center}
-.upload-row input[type="file"]{flex:1;min-width:0;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:12px;padding:5px}
-.upload-row input[type="file"]::file-selector-button{background:#0a0a14;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;padding:4px 8px;margin-right:8px;cursor:pointer}
+.upload-row input[type="file"]{flex:1;min-width:0;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--muted);font-size:var(--fs-sm);padding:7px}
+.upload-row input[type="file"]::file-selector-button{background:#0a0a14;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:var(--fs-sm);padding:6px 10px;margin-right:8px;cursor:pointer}
 .upload-row input[type="file"]::file-selector-button:hover{border-color:var(--accent);color:var(--accent)}
-.ssim-summary{margin-top:7px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.ssim-summary{margin-top:7px;color:var(--muted);font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
 .ssim-summary strong{color:var(--accent);font-weight:600}
 .ssim-visualizer{margin-top:8px;border:1px solid var(--border);border-radius:6px;background:#0a0a14;overflow:hidden}
 .ssim-visualizer.hidden{display:none}
-.ssim-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 9px;border-bottom:1px solid var(--border)}
-.ssim-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.ssim-refresh{flex:none;background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:3px 8px;cursor:pointer}
+.ssim-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 11px;border-bottom:1px solid var(--border)}
+.ssim-title{font-size:var(--fs-xs);font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.ssim-refresh{flex:none;background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:var(--fs-xs);padding:5px 10px;cursor:pointer}
 .ssim-refresh:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
 .ssim-refresh:disabled{opacity:.5;cursor:default}
-.ssim-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(108px,138px);gap:8px;overflow-x:auto;padding:9px}
+.ssim-strip{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(124px,154px);gap:8px;overflow-x:auto;padding:10px}
 .ssim-frame{border:1px solid var(--border);border-radius:6px;background:var(--panel);overflow:hidden;cursor:pointer;min-width:0}
 .ssim-frame:hover{border-color:var(--accent)}
-.ssim-frame img{display:block;width:100%;height:78px;object-fit:cover;background:#000}
-.ssim-meta{padding:5px 6px;font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.35}
-.ssim-meta strong{display:block;color:var(--accent);font-size:11px}
-.ssim-empty{padding:10px;color:var(--muted);font-size:11px}
+.ssim-frame img{display:block;width:100%;height:92px;object-fit:cover;background:#000}
+.ssim-meta{padding:6px 7px;font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums;line-height:1.35}
+.ssim-meta strong{display:block;color:var(--accent);font-size:var(--fs-sm)}
+.ssim-empty{padding:12px;color:var(--muted);font-size:var(--fs-sm)}
 .ssim-review-links{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .ssim-review-links.hidden{display:none}
-.ssim-review-links a{border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;padding:4px 7px;text-decoration:none}
+.ssim-review-links a{border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:var(--fs-xs);padding:5px 9px;text-decoration:none}
 .ssim-review-links a:hover{border-color:var(--accent);color:var(--accent)}
 .imu-control{display:grid;grid-template-columns:90px 1fr;gap:7px;align-items:center}
-.imu-control select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:12px}
+.imu-control select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px;font-size:var(--fs-sm)}
 .imu-events{margin-top:7px;display:flex;flex-direction:column;gap:6px}
 .imu-events.hidden{display:none}
-.imu-event{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:6px 8px;font-size:11px}
+.imu-event{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:8px 10px;font-size:var(--fs-sm)}
 .imu-event .imu-head-line{display:flex;justify-content:space-between;gap:8px;font-variant-numeric:tabular-nums}
 .imu-event .imu-type{font-weight:600;text-transform:uppercase;letter-spacing:.04em}
 .imu-conf-alta{color:#5dd39e}
 .imu-conf-baixa{color:#e8c468}
 .imu-conf-descartar{color:#e87468}
 .imu-windows{display:flex;gap:6px;margin-top:5px}
-.imu-windows button{flex:none;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:10px;padding:3px 7px;cursor:pointer;font-variant-numeric:tabular-nums}
+.imu-windows button{flex:none;background:none;border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:var(--fs-xs);padding:4px 8px;cursor:pointer;font-variant-numeric:tabular-nums}
 .imu-windows button:hover{border-color:var(--accent);color:var(--accent)}
+
+/* ── Tabbed views ── */
+.tabbar{display:flex;gap:5px;margin-left:auto;flex-wrap:wrap;background:var(--panel-2);border:1px solid var(--border);border-radius:11px;padding:3px}
+.tab{background:transparent;border:1px solid transparent;color:var(--muted);border-radius:8px;padding:6px 14px;cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s;letter-spacing:.01em}
+.tab:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.tab.active{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%,transparent)}
+/* Only the active view's panels are shown. */
+.view{display:none}
+body.view-anotar     [data-view="anotar"],
+body.view-frames     [data-view="frames"],
+body.view-inferencia [data-view="inferencia"],
+body.view-lote       [data-view="lote"],
+body.view-desvios    [data-view="desvios"],
+body.view-datasets   [data-view="datasets"]{display:block}
+/* The video+charts player only matters on the video-centric views. */
+#player-left{display:none;flex-direction:column}
+body.view-anotar #player-left,
+body.view-inferencia #player-left{display:flex}
+body.view-anotar .right,
+body.view-inferencia .right{display:flex}
+body.view-lote .right,
+body.view-frames .right,
+body.view-desvios .right,
+body.view-datasets .right{display:none}
+/* Non-video views give their panels the full width. */
+body.view-lote .main,
+body.view-frames .main,
+body.view-desvios .main,
+body.view-datasets .main{grid-template-columns:1fr}
+/* The left panel scrolls per-section elsewhere; the frames view fills it. */
+body.view-frames .left{border-right:none}
+/* ── Frames view: large wrapping grid ── */
+body.view-frames .frames-section{padding:18px 24px}
+.frames-controls{display:grid;grid-template-columns:220px minmax(0,1fr);gap:20px;align-items:end;max-width:720px}
+.frames-controls .form-row{margin-top:0}
+body.view-frames .ssim-summary{font-size:var(--fs-md);margin-top:16px}
+body.view-frames .ssim-visualizer{margin-top:14px}
+body.view-frames .ssim-strip{grid-auto-flow:row;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));grid-auto-columns:auto;gap:16px;padding:16px;overflow-x:visible}
+body.view-frames .ssim-frame img{height:auto;max-height:62vh;object-fit:contain}
+body.view-frames .ssim-meta{font-size:var(--fs-sm);padding:9px 11px}
+body.view-frames .ssim-meta strong{font-size:var(--fs-md)}
+body.view-frames .ssim-empty{font-size:var(--fs-md);padding:24px}
+body.view-frames .ssim-review-links{margin-top:16px}
+body.view-frames .ssim-review-links a{font-size:var(--fs-sm);padding:7px 12px}
+/* The quick-actions strip mirrors the crop controls — Anotar only. */
+body.view-inferencia #quick-actions{display:none}
+
+/* ── Modern polish ── */
+header{box-shadow:var(--shadow);position:relative;z-index:5;padding:10px 16px}
+.section{padding:14px 16px}
+/* Softer, rounder cards across the board (overrides earlier 6px) */
+.val-box,.crop-point,.btn,.rchip,.nav-btn,.hist-item,.ssim-visualizer,.imu-event,
+#group-select,#clip-select,#ssim-metric,.imu-control select,.upload-row input[type="file"]{border-radius:var(--radius-sm)}
+.crop-point,.ssim-visualizer,.imu-event{box-shadow:0 1px 2px rgba(0,0,0,.18)}
+/* Clearer focus ring for keyboard/click */
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid color-mix(in srgb,var(--accent) 60%,transparent);outline-offset:1px}
+/* Thin modern scrollbars */
+.left,.right,.history-list,.ssim-strip{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.left::-webkit-scrollbar,.right::-webkit-scrollbar,.history-list::-webkit-scrollbar,.ssim-strip::-webkit-scrollbar{width:9px;height:9px}
+.left::-webkit-scrollbar-thumb,.right::-webkit-scrollbar-thumb,.history-list::-webkit-scrollbar-thumb,.ssim-strip::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px;border:2px solid transparent;background-clip:content-box}
+.left::-webkit-scrollbar-thumb:hover,.right::-webkit-scrollbar-thumb:hover{background:var(--muted);background-clip:content-box}
 </style>
 </head>
 <body>
@@ -252,12 +322,23 @@ body.clip-horizontal .video-wrapper{height:55vh}
     <select id="group-select" title="Ir para pasta"></select>
     <select id="clip-select" title="Ir para clipe"></select>
   </div>
+
+  <nav class="tabbar" id="tabbar">
+    <button class="tab" data-view="anotar">Anotar</button>
+    <button class="tab" data-view="frames">Frames</button>
+    <button class="tab" data-view="inferencia">Inferência</button>
+    <button class="tab" data-view="lote">Lote + Manifesto</button>
+    <button class="tab" data-view="desvios">Desvios + Validação</button>
+    <button class="tab" data-view="datasets">Datasets</button>
+  </nav>
 </header>
 
 <div class="main">
 
   <!-- ════ LEFT ════ -->
   <div class="left">
+    <!-- Persistent player (video + sensors): shown only on Anotar/Inferência -->
+    <div id="player-left">
     <div class="video-wrapper">
       <video id="video" preload="metadata" playsinline></video>
     </div>
@@ -296,6 +377,10 @@ body.clip-horizontal .video-wrapper{height:55vh}
       </div>
     </div>
 
+    </div><!-- end #player-left -->
+
+    <!-- ░░ View: Inferência ao vivo ░░ -->
+    <div class="view" data-view="inferencia">
     <div class="section">
       <h3>DroNet</h3>
       <div class="dronet-grid">
@@ -322,7 +407,10 @@ body.clip-horizontal .video-wrapper{height:55vh}
         <button class="btn" id="btn-reset-model">Padrão</button>
       </div>
     </div>
+    </div><!-- end view: inferencia -->
 
+    <!-- ░░ View: Anotar ░░ -->
+    <div class="view" data-view="anotar">
     <!-- Crop -->
     <div class="section" id="crop-section">
       <h3>Recortar clipe</h3>
@@ -378,8 +466,7 @@ body.clip-horizontal .video-wrapper{height:55vh}
       </div>
 
       <div class="btn-row">
-        <button class="btn" id="btn-suggest" data-mode="vertical">⬦ Vertical</button>
-        <button class="btn" id="btn-suggest-walk" data-mode="walking">⬦ Vertical + andando</button>
+        <button class="btn" id="btn-suggest-walk" data-mode="walking">⬦ Caminhada</button>
         <button class="btn" id="btn-suggest-lateral" data-mode="lateral">⬦ Desvio lateral</button>
       </div>
       <div class="form-row">
@@ -395,20 +482,40 @@ body.clip-horizontal .video-wrapper{height:55vh}
       </div>
       <div class="ssim-summary hidden" id="imu-quality"></div>
       <div class="imu-events hidden" id="imu-events"></div>
-      <div class="form-row">
-        <label>Métrica</label>
-        <select id="ssim-metric">
-          <option value="ssim" selected>SSIM</option>
-          <option value="dinov2">DINOv2</option>
-          <option value="lpips">LPIPS</option>
-          <option value="vif">VIF</option>
-        </select>
+      <div class="btn-row">
+        <button class="btn" id="btn-goto-frames" type="button">Escolha de frames →</button>
       </div>
-      <div class="form-row">
-        <label id="ssim-threshold-label">SSIM</label>
-        <div class="ssim-control">
-          <input id="ssim-threshold-range" type="range" min="0.900" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
-          <input id="ssim-threshold" type="number" min="0.001" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
+      <div class="btn-row">
+        <button class="btn" id="export-btn" disabled>Exportar</button>
+      </div>
+    </div>
+    </div><!-- end view: anotar -->
+
+    <!-- ░░ View: Escolha de frames ░░ -->
+    <div class="view" data-view="frames">
+    <div class="section frames-section">
+      <h3>Escolha de frames</h3>
+      <p style="margin:.25em 0 .75em;color:#9aa0a6;font-size:.85em">
+        Frames selecionados no intervalo recortado (marque início/fim em
+        <strong>Anotar</strong>). Ajuste a métrica e o limiar para refinar a
+        seleção; clique em um frame para levar o vídeo até ele.
+      </p>
+      <div class="frames-controls">
+        <div class="form-row">
+          <label>Métrica</label>
+          <select id="ssim-metric">
+            <option value="ssim" selected>SSIM</option>
+            <option value="dinov2">DINOv2</option>
+            <option value="lpips">LPIPS</option>
+            <option value="vif">VIF</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label id="ssim-threshold-label">SSIM</label>
+          <div class="ssim-control">
+            <input id="ssim-threshold-range" type="range" min="0.900" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
+            <input id="ssim-threshold" type="number" min="0.001" max="0.999" step="0.001" value="{{ '%.3f'|format(ssim_threshold) }}">
+          </div>
         </div>
       </div>
       <div class="ssim-summary" id="ssim-summary">SSIM: aguardando sugestao</div>
@@ -420,11 +527,11 @@ body.clip-horizontal .video-wrapper{height:55vh}
         <div class="ssim-strip" id="ssim-strip"></div>
       </div>
       <div class="ssim-review-links hidden" id="ssim-review-links"></div>
-      <div class="btn-row">
-        <button class="btn" id="export-btn" disabled>Exportar</button>
-      </div>
     </div>
+    </div><!-- end view: frames -->
 
+    <!-- ░░ View: Lote + Manifesto ░░ -->
+    <div class="view" data-view="lote">
     <!-- Batch export -->
     <div class="section">
       <h3>Exportação em lote (cortes automáticos)</h3>
@@ -469,7 +576,10 @@ body.clip-horizontal .video-wrapper{height:55vh}
       <div class="dronet-status" id="manifest-progress"></div>
       <div class="ssim-review-links hidden" id="manifest-export-links"></div>
     </div>
+    </div><!-- end view: lote -->
 
+    <!-- ░░ View: Desvios + Validação ░░ -->
+    <div class="view" data-view="desvios">
     <!-- Deviation export + validation video -->
     <div class="section">
       <h3>Exportar desvios + validação</h3>
@@ -489,7 +599,10 @@ body.clip-horizontal .video-wrapper{height:55vh}
       <div class="dronet-status" id="inspect-progress"></div>
       <div class="ssim-review-links hidden" id="inspect-links"></div>
     </div>
+    </div><!-- end view: desvios -->
 
+    <!-- ░░ View: Datasets + histórico ░░ -->
+    <div class="view" data-view="datasets">
     <!-- Dataset upload -->
     <div class="section">
       <h3>Importar dataset SenseCV</h3>
@@ -508,6 +621,7 @@ body.clip-horizontal .video-wrapper{height:55vh}
       <h3>Histórico de exportações</h3>
       <div class="history-list" id="history-list"></div>
     </div>
+    </div><!-- end view: datasets -->
   </div><!-- end left -->
 
   <!-- ════ RIGHT ════ -->
@@ -616,27 +730,34 @@ let sensemodelPendingExact = null;
 let sensemodelLastKey = null;
 let sensemodelSeq = 0;
 
-// ═══ Video orientation (tag-driven, per-video) ══
+// ═══ Video orientation (measured, per-video) ════
 // Desired display orientation for the active clip: supermarket footage is shown
 // portrait, every other dataset landscape. Set per clip in loadClip().
 let wantPortrait = true;
-// The browser already rotates each frame by the file's container rotation tag
-// (`DATA.video_rotation`, served from the backend). Square or wrongly-tagged
-// gimbal clips end up on their side because of it. We compute the net CSS
-// rotation that (a) undoes that tag and (b) adds the supermarket portrait
-// correction:  deg = (wantPortrait ? 90 : 0) - videoRotation.
-// Subtracting each clip's *own* tag is what makes a dataset that mixes tagged
-// and untagged clips all come out upright.
-let videoRotation = 0;
+// We decide rotation purely from the frame the browser actually PAINTS
+// (videoWidth/Height) and rotate 90° only when that painted orientation doesn't
+// match what we want. We deliberately do NOT look at the container rotation tag:
+// this browser does not honor it, and the IFCE gimbal clips are square 720×720
+// with a spurious rotate=90 tag while their pixels are already upright — so any
+// tag-based correction lays them on their side. A square (or already-matching)
+// frame is therefore left untouched.
+let videoRotation = 0;   // kept for the backend payload; not used for rotation
 function applyVideoOrientation(){
   const wrap = document.querySelector('.video-wrapper');
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (!w || !h) return;
-  let deg = (((wantPortrait ? 90 : 0) - videoRotation) % 360 + 360) % 360;
-  const swap = (deg === 90 || deg === 270);   // rotated rect needs swapped box
-  video.style.width  = (swap ? h : w) + 'px';
-  video.style.height = (swap ? w : h) + 'px';
-  video.style.transform = `translate(-50%,-50%) rotate(${deg}deg)`;
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const paintedPortrait = (vw && vh) ? vh > vw : wantPortrait;
+  const square = !!(vw && vh) && vw === vh;
+  if (!square && paintedPortrait !== wantPortrait){
+    video.style.width  = h + 'px';
+    video.style.height = w + 'px';
+    video.style.transform = `translate(-50%,-50%) rotate(${wantPortrait ? 90 : -90}deg)`;
+  } else {
+    video.style.width  = w + 'px';
+    video.style.height = h + 'px';
+    video.style.transform = 'translate(-50%,-50%)';
+  }
 }
 window.addEventListener('resize', applyVideoOrientation);
 video.addEventListener('loadedmetadata', applyVideoOrientation);
@@ -1215,18 +1336,15 @@ function showVerticalWarning(show, msg){
 }
 
 const SUGGEST_LABELS={
-  vertical:'⬦ Vertical',
-  walking:'⬦ Vertical + andando',
+  walking:'⬦ Caminhada',
   lateral:'⬦ Desvio lateral',
 };
 const SUGGEST_BTN_IDS={
-  vertical:'btn-suggest',
   walking:'btn-suggest-walk',
   lateral:'btn-suggest-lateral',
 };
 const SUGGEST_TAGS={
-  vertical:'vertical',
-  walking:'vertical + andando',
+  walking:'caminhada',
   lateral:'desvio lateral',
 };
 
@@ -1497,13 +1615,12 @@ async function runSuggest(mode, opts={}){
 
 async function runAutoSuggest(){
   const reqIdx = currentIdx;
-  for (const mode of ['lateral', 'walking', 'vertical']) {
+  for (const mode of ['lateral', 'walking']) {
     const found = await runSuggest(mode, {auto:true});
     if (reqIdx !== currentIdx || found) return;
   }
 }
 
-document.getElementById('btn-suggest').addEventListener('click',()=>runSuggest('vertical'));
 document.getElementById('btn-suggest-walk').addEventListener('click',()=>runSuggest('walking'));
 document.getElementById('btn-suggest-lateral').addEventListener('click',()=>runSuggest('lateral'));
 document.getElementById('btn-ssim-refresh').addEventListener('click',()=>loadSsimVisualizer());
@@ -1967,8 +2084,33 @@ document.addEventListener('keydown',e=>{
   if(e.key==='[') document.getElementById('btn-prev').click();
 });
 
+// ═══ Tabbed views ═══════════════════════════════
+const VIEWS = ['anotar','frames','inferencia','lote','desvios','datasets'];
+function setView(name){
+  if(!VIEWS.includes(name)) name = 'anotar';
+  // Touch only view-* classes so clip-vertical/clip-horizontal (orientation)
+  // set by loadClip() are preserved.
+  VIEWS.forEach(v => document.body.classList.remove('view-'+v));
+  document.body.classList.add('view-'+name);
+  document.querySelectorAll('#tabbar .tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.view === name));
+  try { localStorage.setItem('sensecv-view', name); } catch(e) {}
+  // Canvases sized to zero while their container was hidden; fix on reveal.
+  if(name === 'anotar' || name === 'inferencia'){
+    applyVideoOrientation();
+    Object.values(charts).forEach(c => { try { c.resize(); } catch(e) {} });
+  }
+  // Entering the frames window: (re)load the large selection for the crop.
+  if(name === 'frames'){ loadSsimVisualizer(); }
+}
+document.querySelectorAll('#tabbar .tab').forEach(t =>
+  t.addEventListener('click', () => setView(t.dataset.view)));
+document.getElementById('btn-goto-frames').addEventListener('click', () => setView('frames'));
+
 // ═══ Boot ═══════════════════════════════════════
 renderHistory();
+const savedView = (() => { try { return localStorage.getItem('sensecv-view'); } catch(e) { return null; } })();
+setView(savedView || 'anotar');
 if (TOTAL > 0) {
   buildClipSelect(0);
   loadClip(0);

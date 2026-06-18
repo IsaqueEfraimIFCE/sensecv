@@ -5,6 +5,68 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-19] feature | split frame selection into its own large "Frames" tab
+- `index.html`: frame-selection UI (métrica select, threshold slider/number,
+  summary, `#ssim-visualizer` strip, review links) moved out of `Anotar` into a
+  new full-width **`Frames`** view; viewer now has **six** tabs. `Anotar` keeps
+  crop/classification/suggest/IMU/export plus an "Escolha de frames →" button.
+- Large display: in `body.view-frames` the `.ssim-strip` becomes a wrapping grid
+  (`repeat(auto-fill,minmax(340px,1fr))`) with frames up to `62vh` tall at
+  `object-fit:contain` — every retained frame shown big and uncropped.
+- Wiring: `'frames'` added to `VIEWS`; `setView('frames')` calls
+  `loadSsimVisualizer()`; all moved controls keep their IDs so JS (incl. `Anotar`
+  Export reading métrica/threshold) is unaffected. No duplicate IDs; template
+  renders 200.
+- Pages touched: [[viewer-frontend]].
+
+## [2026-06-19] fix | video orientation reverted to measured (tag ignored)
+- The 2026-06-18 tag-driven rule (`deg = (wantPortrait?90:0) - videoRotation`)
+  laid almost every clip on its side. Ground-truth check: a decoded raw frame of
+  the IFCE gimbal set (720×720, `rotate=90` tag) is **already upright**, and this
+  browser does **not** honor the tag — so undoing it spun upright frames sideways.
+- `index.html` `applyVideoOrientation()` now decides purely from the painted
+  `videoWidth/videoHeight` vs `wantPortrait`: rotate 90° only on mismatch, leave
+  square/already-matching frames at `deg = 0`. The container tag is no longer used
+  for orientation (`_video_rotation()`/`DATA.video_rotation` still returned but
+  unused). This restores the pre-`08d82c9` measured behaviour.
+- Pages touched: [[viewer-frontend]].
+
+## [2026-06-19] style | modern typography + visual refresh of the viewer
+- `index.html` CSS: added design tokens to `:root` (colour palette, a type scale
+  `--fs-xs…--fs-xl`, radius + shadow tokens); body now uses an Inter-first stack
+  with antialiasing and 1.5 line-height.
+- Then **scaled the whole UI up for readability** (sizes were too small): type
+  scale bumped (base 15→16px, `--fs-xs` 11.5→13px … `--fs-xl` 22→26px) and the
+  many hard-coded `px` font sizes converted onto the scale, so text flows from
+  `:root`. Headline readouts enlarged (value numbers → `--fs-xl`, crop time →
+  `--fs-lg`); left panel widened 480→540px and the three charts grew 155→190px.
+- Modern polish: pill tab bar with accent-glow active state, rounded cards with
+  soft shadows, `:focus-visible` accent rings, thin custom scrollbars, brighter
+  `--text`/`--muted` for contrast. No HTML/JS structure changes.
+- Verified: `/` renders 200; no remaining small hard-coded `px` font sizes.
+- Pages touched: [[viewer-frontend]].
+
+## [2026-06-19] refactor | remove dead suggestion code + split viewer into 5 tabs
+- Backend cleanup (`app.py`): deleted the unused benchmark/template-matching
+  walking detector (`_template_sustained`, `_walking_templates`,
+  `_benchmark_profile`/`_benchmark_scores`/`_benchmark_sustained`,
+  `_resample_features`, `_normalize_template`, `_walking_feature_series`,
+  `_best_sustained`) and the orphaned `_lateral_acceleration_series` — 362 lines.
+  Retired the `vertical` suggestion path: `suggest_crop` is walking-only
+  (default `mode='walking'`), `api_suggest` default `vertical`→`walking` (kept
+  `_first_sustained`, still used for horizontal walking-only clips).
+- Frontend cleanup (`index.html`): dropped the "⬦ Vertical" button + listener,
+  `runAutoSuggest` fallback now `['lateral','walking']`, trimmed `SUGGEST_*` maps;
+  walking button relabelled "⬦ Caminhada".
+- Viewer split into 5 client-side tabs (one route): Anotar | Inferência | Lote +
+  Manifesto | Desvios + Validação | Datasets. `setView()` toggles a `view-*`
+  body class (preserving orientation classes), persists to `localStorage`, and
+  resizes charts/orientation on reveal. Video+charts player persists across the
+  two video-centric tabs.
+- Verified: import OK; `/api/suggest/0` walking & lateral → found; `?mode=vertical`
+  → walking; `/` renders 200 with all 5 views balanced (5 open / 5 close).
+- Pages touched: [[crop-suggestion]], [[viewer-frontend]], [[api-routes]].
+
 ## [2026-06-18] fix | video orientation is tag-driven (undoes container rotation)
 - Backend `_video_rotation(idx)` reads each clip's display rotation tag (cv2
   `CAP_PROP_ORIENTATION_META`) and `get_clip_data` returns it as

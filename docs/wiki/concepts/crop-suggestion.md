@@ -2,7 +2,7 @@
 type: concept
 tags: [algorithm, workflow]
 code_refs: [app.py, templates/index.html]
-updated: 2026-06-18
+updated: 2026-06-19
 ---
 
 # Crop suggestion
@@ -11,12 +11,21 @@ updated: 2026-06-18
 a clip so the operator rarely sets markers by hand. Exposed at
 `/api/suggest/<idx>?mode=` ([[api-routes]]).
 
-## Three modes
+## Two modes
 | mode | mask used | intent |
 |---|---|---|
-| `vertical` | [[orientation-detection]] `vertical` | first sustained portrait period; the broader setup-to-end proposal |
 | `walking` (auto) | exported history first; otherwise `vertical AND walking` ([[walking-detection]]) | walking-only crop that matches known exports and falls back to detector logic for new clips |
 | `lateral` | IMU deviation event (PDF, see below) | the deviation cut from `suggest_deviation_cut` — `decisao` window `[T1-Δ, T1]` by default |
+
+> **Retired (2026-06-19):** the old `vertical` mode (first sustained portrait
+> period, via `_first_sustained` on the orientation mask) was removed along with
+> its viewer button. `suggest_crop(idx)` now only does walking; `mode` defaults
+> to `'walking'` and `/api/suggest?mode=vertical` falls through to walking.
+> `_first_sustained` is kept — it still segments the walking run for horizontal
+> clips (below). The dead benchmark/template-matching detector
+> (`_template_sustained` and its `_walking_templates`/`_benchmark_*`/
+> `_walking_feature_series` helpers) and the orphaned
+> `_lateral_acceleration_series` were deleted in the same pass.
 
 > **As of 2026-06-18** the viewer's "Desvio lateral" button and
 > `/api/suggest?mode=lateral` route to **`suggest_deviation_cut`** (the PDF cut,
@@ -160,13 +169,13 @@ Random Forest from `history.json`; `_classifier_walking_window()` smooths frame
 probabilities and returns one contiguous walking segment.
 
 ## Window logic
-`vertical` mode uses `_first_sustained()`:
-- Scans for the first run of at least `1.5 s` of frames where the vertical mask
-  holds, and uses that run's first frame as `start`.
+Horizontal (walking-only) clips use `_first_sustained()` on the walking mask:
+- Scans for the first run of at least `1.5 s` of frames where the mask holds,
+  and uses that run's first frame as `start`.
 - `end` is the last frame anywhere where the mask is true, so the window spans
-  to the final qualifying portrait moment.
+  to the final qualifying moment.
 
-`walking` fallback uses `_classifier_walking_window()`:
+`walking` mode for supermarket clips uses `_classifier_walking_window()`:
 - Classifies each frame as walking / not walking from IMU + gyroscope features.
 - Uses rolling autocorrelation of acceleration magnitude to capture gait cadence.
 - Smooths probabilities and merges nearby active pieces into one walking bout.
@@ -193,12 +202,12 @@ images remain for dataset composition.
 
 ## UI integration ([[viewer-frontend]])
 - Auto-suggest: `loadClip()` calls `runAutoSuggest()`, which tries `lateral`
-  first, then `walking`, then `vertical`. The user preference is to start with
-  the desvio-lateral cut and only use other selections as fallbacks. Since
-  `lateral` is now the PDF cut, clips with **no** IMU desvio return
-  `found:false` and auto-suggest falls through to `walking`/`vertical`.
-- Three buttons ("Vertical", "Vertical + andando", "Desvio lateral") re-run on
-  demand through one `runSuggest(mode)` with a stale-request guard.
+  first, then `walking`. The user preference is to start with the desvio-lateral
+  cut and use walking only as a fallback. Since `lateral` is the PDF cut, clips
+  with **no** IMU desvio return `found:false` and auto-suggest falls through to
+  `walking`.
+- Two buttons ("⬦ Caminhada", "⬦ Desvio lateral") re-run on demand through one
+  `runSuggest(mode)` with a stale-request guard, under the **Anotar** tab.
 
 ## Tuning surface
 The classifier is trained from the current exports in `history.json` and cached

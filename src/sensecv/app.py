@@ -1071,53 +1071,6 @@ def _orientation_walking_masks(idx):
     return secs, fps, vertical, walking
 
 
-def _walking_feature_series(idx):
-    """Features used to compare new clips against exported walking crops."""
-    folder = clip_path(idx)
-    frames   = load_json(folder, 'frames.json')['frames']
-    acc_data = load_json(folder, 'accelerations.json')['accelerations']
-
-    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
-    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
-    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data], dtype=np.float64)
-    if len(ft) < 2 or len(av) == 0:
-        raise ValueError('sensor data is empty or too short')
-
-    t0 = float(ft[0])
-    secs = (ft - t0) / 1e6
-    fps = float(1e6 / np.median(np.diff(ft)))
-
-    aligned = np.empty((len(ft), 3), dtype=np.float64)
-    for i, a_usec in enumerate(ft):
-        j = min(max(int(np.searchsorted(at, a_usec)), 0), len(av) - 1)
-        aligned[i] = av[j]
-
-    amag = np.linalg.norm(aligned, axis=1)
-    ay_n = np.abs(aligned[:, 1]) / np.maximum(amag, 1e-6)
-    az_n = np.abs(aligned[:, 2]) / np.maximum(amag, 1e-6)
-
-    W = min(len(ft), max(1, int(fps * 1.0)))
-    kernel = np.ones(W) / W
-    s_ay = np.convolve(ay_n, kernel, mode='same')
-    s_az = np.convolve(az_n, kernel, mode='same')
-
-    mean_mag = np.convolve(amag, kernel, mode='same')
-    var_mag = np.convolve((amag - mean_mag) ** 2, kernel, mode='same')
-    std_mag = np.sqrt(np.maximum(var_mag, 0.))
-
-    dmag = np.abs(np.diff(amag, prepend=amag[0])) * fps
-    jerk = np.convolve(dmag, kernel, mode='same')
-
-    features = np.column_stack([
-        s_ay,
-        s_az,
-        np.log1p(std_mag),
-        np.log1p(jerk),
-    ])
-    vertical_soft = (s_ay > 0.88) & (s_az < 0.28)
-    return secs, fps, features, vertical_soft
-
-
 def _imu_walking_series(idx):
     """Per-frame portrait and walking evidence from accelerometer + gyroscope."""
     folder = clip_path(idx)
@@ -1319,130 +1272,6 @@ def _classifier_feature_series(idx):
     return result
 
 
-def _benchmark_profile():
-    """Build a positive/negative sensor profile from exported crops."""
-    positives = []
-    negatives = []
-    durations = []
-
-    for entry in load_history():
-        idx = entry.get('source_idx')
-        start = entry.get('start')
-        end = entry.get('end')
-        if idx is None or start is None or end is None:
-            continue
-        if idx < 0 or idx >= len(CLIPS) or end <= start:
-            continue
-        try:
-            secs, _fps, features, _vertical = _walking_feature_series(int(idx))
-        except Exception:
-            continue
-
-        start = float(start)
-        end = float(end)
-        gt = (secs >= start) & (secs <= end)
-        ctx = (secs >= max(0., start - 5.0)) & (secs <= end + 5.0)
-        neg = ctx & ~gt
-        if gt.any() and neg.any():
-            positives.append(features[gt])
-            negatives.append(features[neg])
-            durations.append(end - start)
-
-    if not positives or not negatives:
-        return None
-
-    pos = np.vstack(positives)
-    neg = np.vstack(negatives)
-
-    def robust_stats(values):
-        q25 = np.percentile(values, 25, axis=0)
-        q75 = np.percentile(values, 75, axis=0)
-        return np.median(values, axis=0), np.maximum(q75 - q25, 0.05)
-
-    pos_mid, pos_scale = robust_stats(pos)
-    neg_mid, neg_scale = robust_stats(neg)
-    dur = np.array(durations, dtype=np.float64)
-    return {
-        'pos_mid': pos_mid,
-        'pos_scale': pos_scale,
-        'neg_mid': neg_mid,
-        'neg_scale': neg_scale,
-        'threshold': float((
-            np.percentile(_benchmark_scores(pos, pos_mid, pos_scale, neg_mid, neg_scale), 25) +
-            np.percentile(_benchmark_scores(neg, pos_mid, pos_scale, neg_mid, neg_scale), 75)
-        ) / 2),
-        'min_duration': float(max(1.5, np.percentile(dur, 10) * 0.75)),
-        'max_duration': float(max(np.percentile(dur, 90) * 1.25, dur.max())),
-    }
-
-
-def _benchmark_scores(features, pos_mid, pos_scale, neg_mid, neg_scale):
-    pos_dist = np.sum(((features - pos_mid) / pos_scale) ** 2, axis=1)
-    neg_dist = np.sum(((features - neg_mid) / neg_scale) ** 2, axis=1)
-    return neg_dist - pos_dist
-
-
-def _resample_features(features, n=128):
-    if len(features) == 0:
-        return None
-    old_x = np.linspace(0., 1., len(features))
-    new_x = np.linspace(0., 1., n)
-    return np.column_stack([
-        np.interp(new_x, old_x, features[:, j])
-        for j in range(features.shape[1])
-    ])
-
-
-def _normalize_template(features):
-    normalized = features.copy()
-    # Preserve absolute portrait orientation columns; normalize motion intensity
-    # columns so different walking strengths can still match the same pattern.
-    for col in (2, 3):
-        mid = float(np.median(normalized[:, col]))
-        scale = float(np.percentile(normalized[:, col], 75) -
-                      np.percentile(normalized[:, col], 25))
-        scale = max(scale, 0.05)
-        normalized[:, col] = (normalized[:, col] - mid) / scale
-    return normalized
-
-
-def _walking_templates():
-    mtime = os.path.getmtime(HISTORY_FILE) if os.path.exists(HISTORY_FILE) else None
-    if (_walking_template_cache['mtime'] == mtime and
-            _walking_template_cache['templates'] is not None):
-        return (_walking_template_cache['templates'],
-                _walking_template_cache['durations'])
-
-    templates = []
-    durations = []
-    for entry in load_history():
-        idx = entry.get('source_idx')
-        start = entry.get('start')
-        end = entry.get('end')
-        if idx is None or start is None or end is None:
-            continue
-        if idx < 0 or idx >= len(CLIPS) or end <= start:
-            continue
-        try:
-            secs, _fps, features, _vertical = _walking_feature_series(int(idx))
-        except Exception:
-            continue
-        mask = (secs >= float(start)) & (secs <= float(end))
-        if not mask.any():
-            continue
-        resampled = _resample_features(features[mask])
-        if resampled is None:
-            continue
-        templates.append(_normalize_template(resampled))
-        durations.append(float(end) - float(start))
-    _walking_template_cache.update({
-        'mtime': mtime,
-        'templates': templates,
-        'durations': durations,
-    })
-    return templates, durations
-
-
 def _first_sustained(mask, secs, fps, min_sec=1.5):
     """First run of ≥ min_sec frames where mask is True.
     Returns (start_sec, end_sec) where end is the last True frame anywhere
@@ -1462,43 +1291,6 @@ def _first_sustained(mask, secs, fps, min_sec=1.5):
             count = 0
             start_i = None
     return None, None
-
-
-def _best_sustained(mask, secs, fps, min_sec=1.5, max_gap_sec=0.6):
-    """Longest sustained True run, allowing short detector dropouts."""
-    max_gap = max(0, int(fps * max_gap_sec))
-    min_frames = int(fps * min_sec)
-    best = None
-    start_i = None
-    last_true_i = None
-    gap = 0
-
-    def finish():
-        nonlocal best, start_i, last_true_i
-        if start_i is None or last_true_i is None:
-            return
-        frames = last_true_i - start_i + 1
-        if frames >= min_frames and (best is None or frames > best[2]):
-            best = (start_i, last_true_i, frames)
-
-    for i, v in enumerate(mask):
-        if v:
-            if start_i is None:
-                start_i = i
-            last_true_i = i
-            gap = 0
-        elif start_i is not None:
-            gap += 1
-            if gap > max_gap:
-                finish()
-                start_i = None
-                last_true_i = None
-                gap = 0
-    finish()
-
-    if best is None:
-        return None, None
-    return round(float(secs[best[0]]), 2), round(float(secs[best[1]]), 2)
 
 
 def _runs(mask, fps, min_sec=1.0, max_gap_sec=0.7):
@@ -1733,131 +1525,18 @@ def _imu_walking_window(idx):
     return round(float(secs[start_i]), 2), round(float(secs[end_i]), 2)
 
 
-def _benchmark_sustained(idx):
-    profile = _benchmark_profile()
-    if not profile:
-        secs, fps, vertical, walking = _orientation_walking_masks(idx)
-        return _best_sustained(vertical & walking, secs, fps)
-
-    secs, fps, features, vertical = _walking_feature_series(idx)
-    scores = _benchmark_scores(
-        features,
-        profile['pos_mid'],
-        profile['pos_scale'],
-        profile['neg_mid'],
-        profile['neg_scale'],
-    )
-    mask = vertical & (scores > profile['threshold'])
-
-    max_gap = max(0, int(fps * 0.8))
-    min_frames = max(1, int(fps * profile['min_duration']))
-    max_frames = max(min_frames, int(fps * profile['max_duration']))
-    runs = []
-    start_i = None
-    last_true_i = None
-    gap = 0
-
-    def finish():
-        nonlocal start_i, last_true_i
-        if start_i is not None and last_true_i is not None:
-            frames = last_true_i - start_i + 1
-            if frames >= min_frames:
-                runs.append((start_i, last_true_i))
-
-    for i, v in enumerate(mask):
-        if v:
-            if start_i is None:
-                start_i = i
-            last_true_i = i
-            gap = 0
-        elif start_i is not None:
-            gap += 1
-            if gap > max_gap:
-                finish()
-                start_i = None
-                last_true_i = None
-                gap = 0
-    finish()
-
-    if not runs:
-        return None, None
-
-    best = None
-    for start_i, end_i in runs:
-        if end_i - start_i + 1 > max_frames:
-            window = max_frames
-            for s in range(start_i, end_i - window + 2):
-                e = s + window - 1
-                quality = float(np.mean(scores[s:e+1]))
-                if best is None or quality > best[0]:
-                    best = (quality, s, e)
-        else:
-            quality = float(np.mean(scores[start_i:end_i+1]))
-            duration_bonus = math.log(max(end_i - start_i + 1, 1))
-            quality += duration_bonus * 0.15
-            if best is None or quality > best[0]:
-                best = (quality, start_i, end_i)
-
-    return round(float(secs[best[1]]), 2), round(float(secs[best[2]]), 2)
-
-
-def _template_sustained(idx):
-    """Find the single window most similar to exported walking windows."""
-    templates, durations = _walking_templates()
-    if not templates:
-        return _benchmark_sustained(idx)
-
-    secs, fps, features, vertical = _walking_feature_series(idx)
-    if len(secs) < 2:
-        return None, None
-
-    min_duration = min(durations) * 0.8
-    max_duration = max(durations) * 1.15
-    candidate_durations = np.linspace(min_duration, max_duration, 18)
-    step = max(1, int(fps * 0.25))
-    best = None
-
-    for duration in candidate_durations:
-        win = max(4, int(duration * fps))
-        if win >= len(secs):
-            continue
-        for start_i in range(0, len(secs) - win, step):
-            end_i = start_i + win
-            portrait_share = float(vertical[start_i:end_i].mean())
-            if portrait_share < 0.55:
-                continue
-
-            candidate = _resample_features(features[start_i:end_i])
-            if candidate is None:
-                continue
-            candidate = _normalize_template(candidate)
-            distance = min(
-                float(np.mean((candidate - template) ** 2))
-                for template in templates
-            )
-            distance += (1.0 - portrait_share) * 0.5
-            if best is None or distance < best[0]:
-                best = (distance, start_i, end_i)
-
-    if best is None or best[0] > 0.08:
-        return None, None
-
-    end_i = min(best[2], len(secs) - 1)
-    return round(float(secs[best[1]]), 2), round(float(secs[end_i]), 2)
-
-
-def suggest_crop(idx, mode='vertical'):
+def suggest_crop(idx, mode='walking'):
     """
-    Suggest a crop window.
-      mode='vertical' → first sustained portrait period (default, calibrated).
-      mode='walking'  → first sustained portrait *and* walking period.
-    Always reports has_vertical so the UI can warn when a clip never goes
-    vertical at all.
+    Suggest a walking crop window (first sustained portrait *and* walking period;
+    horizontal SenseCV clips ignore orientation). `mode` is kept for call-site
+    compatibility but only 'walking' is supported now — the old 'vertical' mode
+    was retired. Always reports has_vertical so the UI can warn when a clip never
+    goes vertical at all.
     """
     try:
         secs, fps, vertical, walking = _orientation_walking_masks(idx)
     except Exception as e:
-        return {'found': False, 'mode': mode, 'has_vertical': False,
+        return {'found': False, 'mode': 'walking', 'has_vertical': False,
                 'message': f'Dados do clipe invÃ¡lidos: {e}'}
 
     # Horizontal footage (SenseCV roots): orientation is irrelevant, so ignore
@@ -1878,73 +1557,26 @@ def suggest_crop(idx, mode='vertical'):
 
     has_vertical = bool(vertical.any())
 
-    if mode == 'walking':
-        learned = learned_walking_window(idx)
-        if learned:
-            start, end = learned
-            return {'found': True, 'mode': mode, 'start': start, 'end': end,
-                    'has_vertical': has_vertical, 'learned': True}
-        if not has_vertical:
-            start, end = None, None
-        else:
-            start, end = _classifier_walking_window(idx)
+    learned = learned_walking_window(idx)
+    if learned:
+        start, end = learned
+        return {'found': True, 'mode': 'walking', 'start': start, 'end': end,
+                'has_vertical': has_vertical, 'learned': True}
+    if not has_vertical:
+        start, end = None, None
     else:
-        mask = vertical
-        start, end = _first_sustained(mask, secs, fps)
+        start, end = _classifier_walking_window(idx)
     if start is not None:
-        return {'found': True, 'mode': mode, 'start': start, 'end': end,
+        return {'found': True, 'mode': 'walking', 'start': start, 'end': end,
                 'has_vertical': has_vertical}
 
     if not has_vertical:
         msg = 'Nenhum período em posição vertical encontrado'
-    elif mode == 'walking':
-        msg = 'Posição vertical encontrada, mas sem momento de caminhada sustentado'
     else:
-        msg = 'Nenhum período em posição vertical encontrado'
-    return {'found': False, 'mode': mode, 'has_vertical': has_vertical, 'message': msg}
+        msg = 'Posição vertical encontrada, mas sem momento de caminhada sustentado'
+    return {'found': False, 'mode': 'walking', 'has_vertical': has_vertical, 'message': msg}
 
 # ─── Lateral-deviation detection ─────────────────────────────────────────────
-
-def _lateral_acceleration_series(idx):
-    """Per-frame horizontal-acceleration magnitude (gravity removed).
-
-    Gravity is the 1-second rolling mean of the raw accel vector; linear accel
-    is what remains. The horizontal component is everything perpendicular to
-    the local gravity direction, so the metric is orientation-independent
-    (works for both vertical supermercado and horizontal SenseCV clips).
-    Smoothing is intentionally light (~0.1 s) so the sharp impulse of a real
-    sidestep is preserved — the lateral detector scores by peak intensity, so
-    over-smoothing flattens the very feature it tries to find.
-    """
-    folder = clip_path(idx)
-    frames   = load_json(folder, 'frames.json')['frames']
-    acc_data = load_json(folder, 'accelerations.json')['accelerations']
-    ft = np.array([f['time_usec'] for f in frames], dtype=np.float64)
-    at = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
-    av = np.array([[a['x'], a['y'], a['z']] for a in acc_data])
-    if len(ft) < 2 or len(av) == 0:
-        raise ValueError('sensor data is empty or too short')
-    t0 = float(ft[0]); secs = (ft - t0) / 1e6
-    fps = float(1e6 / np.median(np.diff(ft)))
-
-    a_at_f = np.array(interp_at_times(at, av, ft.tolist()))  # (N,3)
-    W = min(len(ft), max(1, int(fps * 1.0)))
-    kernel = np.ones(W) / W
-    g_vec = np.column_stack([np.convolve(a_at_f[:, k], kernel, mode='same')
-                             for k in range(3)])
-    g_norm = np.linalg.norm(g_vec, axis=1, keepdims=True)
-    g_norm = np.where(g_norm < 1e-6, 1e-6, g_norm)
-    g_hat  = g_vec / g_norm
-
-    linear   = a_at_f - g_vec
-    along_g  = np.sum(linear * g_hat, axis=1, keepdims=True) * g_hat
-    horiz    = linear - along_g
-    h_mag    = np.linalg.norm(horiz, axis=1)
-
-    Ws = min(len(ft), max(1, int(fps * 0.1)))
-    h_smooth = np.convolve(h_mag, np.ones(Ws) / Ws, mode='same')
-    return secs, fps, h_smooth
-
 
 def suggest_lateral_deviation(idx, window_sec=1.0, dir_window_sec=2.0):
     """Window where the videomaker's lateral velocity is highest — sidestep.
@@ -3519,7 +3151,7 @@ def api_next_number():
 @app.route('/api/suggest/<int:idx>')
 def api_suggest(idx):
     if idx<0 or idx>=len(CLIPS): return jsonify({'found':False}),404
-    mode = request.args.get('mode', 'vertical')
+    mode = request.args.get('mode', 'walking')
     try:
         metric = _request_metric()
         threshold = _request_ssim_threshold(metric=metric)
@@ -3529,10 +3161,10 @@ def api_suggest(idx):
         # Viewer "Desvio lateral" button: use the PDF-based deviation cut
         # (decisão window T1-Δ→T1 by default), not the old lateral-velocity
         # heuristic. Returns found:false when the IMU finds no desvio, so
-        # runAutoSuggest() falls back to walking/vertical for those clips.
+        # runAutoSuggest() falls back to walking for those clips.
         return jsonify(_suggestion_with_ssim(idx, suggest_deviation_cut(idx), threshold=threshold, metric=metric))
-    if mode not in ('vertical', 'walking'): mode = 'vertical'
-    return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, mode), threshold=threshold, metric=metric))
+    # Only 'walking' remains (the old 'vertical' suggestion was retired).
+    return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, 'walking'), threshold=threshold, metric=metric))
 
 @app.route('/api/ssim/<int:idx>')
 def api_ssim(idx):
