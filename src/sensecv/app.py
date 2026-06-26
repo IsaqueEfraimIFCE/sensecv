@@ -2259,6 +2259,176 @@ def detect_free_walk_span(idx):
     }
 
 
+# ─── Collection manifest labels (data/labels/*.xlsx) ─────────────────────────
+# Each collection ships an .xlsx where every row is one recorded clip. The clip's
+# ground-truth class lives in fixed columns (consistent across every sheet):
+#   col 0  ID                  -> clip number (matches the clip folder 01,02,…)
+#   col 2  POSIÇÃO OBSTACULO   -> obstacle position, or "PARADA" / "LIVRE"
+#   col 3  DESVIO              -> "PARA DIREITA" / "PARA ESQUERDA" / "SEM DESVIO"
+# We key these by recording date (parsed from the filename) + clip number so a
+# clip's display name (SenseCV-02-06-2026-…/…/07) maps straight to its row.
+LABELS_DIR = os.path.join(DATA_DIR, 'labels')
+_MANIFEST_LABELS_CACHE = None
+_PT_MONTHS = {
+    'janeiro': 1, 'fevereiro': 2, 'marco': 3, 'abril': 4, 'maio': 5, 'junho': 6,
+    'julho': 7, 'agosto': 8, 'setembro': 9, 'outubro': 10, 'novembro': 11,
+    'dezembro': 12,
+}
+
+
+def _ascii_upper(value):
+    """Strip accents (the sheets are full of mojibake) and upper-case."""
+    import unicodedata
+    if value is None:
+        return ''
+    norm = unicodedata.normalize('NFKD', str(value))
+    return ''.join(c for c in norm if not unicodedata.combining(c)).upper().strip()
+
+
+def _manifest_date_key(text):
+    """Extract a DD-MM-YYYY key from a label filename ('… 02 de junho de 2026 …')."""
+    m = re.search(r'(\d{1,2})\s+de\s+([a-zç]+)\s+de\s+(\d{4})',
+                  _ascii_upper(text).lower())
+    if not m:
+        return None
+    month = _PT_MONTHS.get(m.group(2))
+    if not month:
+        return None
+    return f'{int(m.group(1)):02d}-{month:02d}-{m.group(3)}'
+
+
+def _manifest_row_kind(desvio_cell, pos_cell):
+    """Map a manifest row's DESVIO + POSIÇÃO cells to (event_type, side)."""
+    desvio = _ascii_upper(desvio_cell)
+    pos = _ascii_upper(pos_cell)
+    if 'PARA DIREITA' in desvio:
+        return ('desvio', 'RIGHT')
+    if 'PARA ESQUERDA' in desvio:
+        return ('desvio', 'LEFT')
+    if 'LIVRE' in pos:
+        return ('livre', 'NONE')
+    if 'PARADA' in pos:
+        return ('parada', 'NONE')
+    # "SEM DESVIO" with the obstacle centered = walk up to it and stop.
+    if 'SEM DESVIO' in desvio:
+        return ('parada', 'NONE')
+    return None
+
+
+def _load_manifest_labels():
+    """Parse every data/labels/*.xlsx into {date_key: {clip_id: (event_type, side)}}."""
+    global _MANIFEST_LABELS_CACHE
+    if _MANIFEST_LABELS_CACHE is not None:
+        return _MANIFEST_LABELS_CACHE
+    out = {}
+    try:
+        import openpyxl
+    except Exception:
+        _MANIFEST_LABELS_CACHE = out
+        return out
+    if os.path.isdir(LABELS_DIR):
+        for fn in sorted(os.listdir(LABELS_DIR)):
+            if not fn.lower().endswith('.xlsx') or fn.startswith('~$'):
+                continue
+            date_key = _manifest_date_key(fn)
+            if not date_key:
+                continue
+            try:
+                wb = openpyxl.load_workbook(
+                    os.path.join(LABELS_DIR, fn), read_only=True, data_only=True)
+            except Exception:
+                continue
+            clips = out.setdefault(date_key, {})
+            for ws in wb.worksheets:
+                for row in ws.iter_rows(values_only=True):
+                    if not row:
+                        continue
+                    try:
+                        clip_id = int(float(row[0]))  # skips header / info rows
+                    except (TypeError, ValueError):
+                        continue
+                    kind = _manifest_row_kind(
+                        row[3] if len(row) > 3 else None,
+                        row[2] if len(row) > 2 else None)
+                    if kind:
+                        clips.setdefault(clip_id, kind)
+            wb.close()
+    _MANIFEST_LABELS_CACHE = out
+    return out
+
+
+def _manifest_kind_for_clip(idx):
+    """Ground-truth (event_type, side) for a clip from its collection manifest.
+
+    Resolves the recording date and clip number from the display name
+    (SenseCV-02-06-2026-IFCE/…/07 -> date 02-06-2026, clip 7). Returns None when
+    there is no manifest row for the clip.
+    """
+    try:
+        display = CLIPS[idx]
+    except (IndexError, TypeError):
+        return None
+    parts = str(display).split('/')
+    dm = re.search(r'(\d{2})-(\d{2})-(\d{4})', parts[0])
+    cm = re.search(r'(\d+)', parts[-1])
+    if not dm or not cm:
+        return None
+    date_key = f'{dm.group(1)}-{dm.group(2)}-{dm.group(3)}'
+    return _load_manifest_labels().get(date_key, {}).get(int(cm.group(1)))
+
+
+def _desvio_window_from_signal(idx, side, delta):
+    """Locate a deviation's [T1, T2] directly from the lateral-velocity signal.
+
+    Used for manifest-confirmed desvios that the generic threshold detector
+    misses — typically the BECE/UFC collections (days 20-22), whose lateral
+    excursions are real but smaller in absolute terms than the IFCE clips the
+    fixed threshold was tuned on. The manifest already gives the side, so we look
+    for the strongest sustained excursion in that known direction (no absolute
+    threshold) and frame the out-and-back around it.
+
+    Returns (t1, t2, direction, strength) or None.
+    """
+    try:
+        series = _imu_event_series(idx)
+    except Exception:
+        return None
+    lat = np.asarray(series['lat_vel'], dtype=np.float64)
+    secs = np.asarray(series['secs'], dtype=np.float64)
+    if len(lat) < 3:
+        return None
+    # Positive lat_vel = leftward (same convention as detect_imu_events). Orient
+    # the signal so a deviation in the manifest's direction reads positive.
+    sign = 1.0 if side == 'LEFT' else -1.0
+    sig = lat * sign
+    peak_i = int(np.argmax(sig))
+    if sig[peak_i] <= 0:
+        # No excursion in the expected direction (sensor sign/orientation odd):
+        # fall back to the largest lateral excursion either way — the manifest
+        # still owns the side, we only need the timing.
+        peak_i = int(np.argmax(np.abs(lat)))
+        peak_val = float(abs(lat[peak_i]))
+        prof = np.abs(lat)
+    else:
+        peak_val = float(sig[peak_i])
+        prof = sig
+    if peak_val <= 1e-9:
+        return None
+    # Onset/return: the contiguous run around the peak where the excursion stays
+    # above 30% of its own height (relative, so it adapts to each collection).
+    thr = 0.30 * peak_val
+    i0 = peak_i
+    while i0 > 0 and prof[i0 - 1] > thr:
+        i0 -= 1
+    i1 = peak_i
+    while i1 < len(prof) - 1 and prof[i1 + 1] > thr:
+        i1 += 1
+    t1, t2 = float(secs[i0]), float(secs[i1])
+    direction = 'esquerda' if side == 'LEFT' else 'direita'
+    strength = peak_val / IMU_DEVIATION_LAT_VEL
+    return t1, t2, direction, strength
+
+
 def suggest_deviation_cut(idx, delta=None, window=None):
     """Suggested deviation cut from the IMU event windows (PDF §2.2/§2.3).
 
@@ -2281,6 +2451,11 @@ def suggest_deviation_cut(idx, delta=None, window=None):
     `detect_stop_onset`); then, with neither desvio nor parada, the clip is a
     free walk (`livre`, `detect_free_walk_span`) and the whole video is
     returned. Only a clip with no usable walking yields found=False.
+
+    When the clip has a row in the collection manifest (data/labels/*.xlsx), that
+    ground-truth class wins: it picks the cut branch (desvio/parada/livre) and the
+    deviation side, instead of the IMU's guess. The IMU is still used for the cut
+    *timing* within the chosen class.
     """
     window = window or DEVIATION_CUT_WINDOW
     try:
@@ -2290,76 +2465,158 @@ def suggest_deviation_cut(idx, delta=None, window=None):
                 'message': f'IMU indisponivel: {e}'}
     duration_clip = float(result.get('duration_s') or 0.0)
     margin = IMU_DEVIATION_EDGE_MARGIN_SEC
-    desvios = [e for e in result.get('events', []) if e.get('type') == 'desvio']
+
+    mk = _manifest_kind_for_clip(idx)
+    mk_type, mk_side = (mk if mk else (None, None))
+
+    all_desvios = [e for e in result.get('events', []) if e.get('type') == 'desvio']
     # A deviation never happens at the very start or end of the clip; drop any
     # desvio whose onset/return sits inside the edge margin (only when the clip
     # is long enough that a margin on both sides still leaves a middle).
+    desvios = all_desvios
     if duration_clip > 2 * margin:
         desvios = [
-            e for e in desvios
+            e for e in all_desvios
             if float(e.get('t1', 0.0)) >= margin
             and float(e.get('t2', duration_clip)) <= duration_clip - margin
         ]
-    if not desvios:
-        # No lateral deviation: fall back to the moment the person starts to
-        # stop. Cut the same PDF label window around the stop onset (T1), so a
+
+    def _desvio_cut(side_override=None, relax=False):
+        # `relax` lets a manifest-confirmed desvio fall back to edge events the
+        # default path would have dropped, so the known class still yields a cut.
+        pool = desvios or (all_desvios if relax else [])
+        if not pool:
+            # Manifest confirms a desvio but the threshold detector found no event
+            # (smaller excursions on the BECE/UFC days). Recover the timing from
+            # the lateral-velocity signal in the manifest's known direction.
+            if side_override and duration_clip > 0:
+                delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
+                sig = _desvio_window_from_signal(idx, side_override, delta_v)
+                if sig is not None:
+                    t1, t2, direction, strength = sig
+                    windows = _event_windows(t1, t2, delta_v, duration_clip)
+                    win = windows.get(window) or windows.get('decisao')
+                    start, end = float(win[0]), float(win[1])
+                    msg = 'desvio confirmado pelo manifesto; janela do sinal lateral'
+                else:
+                    # No usable signal at all: frame the decision window around the
+                    # clip midpoint (deviation happens mid-clip by convention).
+                    mid = duration_clip / 2.0
+                    start = max(0.0, mid - delta_v / 2.0)
+                    end = min(duration_clip, start + delta_v)
+                    t1, t2 = start, end
+                    direction = {'LEFT': 'esquerda', 'RIGHT': 'direita'}.get(side_override)
+                    strength = None
+                    msg = 'desvio confirmado pelo manifesto; janela aproximada'
+                if end - start < 0.2:
+                    start = max(0.0, end - 0.2)
+                return {
+                    'found': True, 'mode': 'deviation', 'window': window,
+                    'has_vertical': True, 'event_type': 'desvio',
+                    'start': round(start, 3), 'end': round(end, 3),
+                    't1': round(t1, 3), 't2': round(t2, 3),
+                    'delta': delta_v, 'direction': direction, 'side': side_override,
+                    'strength': strength, 'label_source': 'manifesto', 'message': msg,
+                }
+            return None
+        best = max(pool, key=lambda e: e.get('strength', 0.0))
+        windows = best.get('windows', {})
+        win = windows.get(window) or windows.get('decisao') or [best['t1'], best['t2']]
+        start, end = float(win[0]), float(win[1])
+        if end - start < 0.2:  # near clip-start truncation: keep a usable minimum
+            start = max(0.0, end - 0.2)
+        side = side_override or {'esquerda': 'LEFT', 'direita': 'RIGHT'}.get(
+            best.get('direction'), 'NONE')
+        return {
+            'found': True, 'mode': 'deviation', 'window': window, 'has_vertical': True,
+            'event_type': 'desvio',
+            'start': round(start, 3), 'end': round(end, 3),
+            't1': best['t1'], 't2': best['t2'], 'delta': result.get('delta'),
+            'direction': best.get('direction'), 'side': side,
+            'confidence': best.get('confidence'), 'strength': best.get('strength'),
+            'label_source': 'manifesto' if side_override else 'imu',
+        }
+
+    def _parada_cut(force=False):
+        # Cut the same PDF label window around the stop onset (T1), so a
         # 'decisao' cut frames the scene just before the halt.
         try:
             stop = detect_stop_onset(idx)
         except Exception:
             stop = None
-        if stop is not None:
-            delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
-            windows = _event_windows(stop['t1'], stop['t2'], delta_v, stop['duration_s'])
-            win = windows.get(window) or windows.get('decisao')
-            start, end = float(win[0]), float(win[1])
-            if end - start < 0.2:  # near clip-start truncation: usable minimum
-                start = max(0.0, end - 0.2)
-            return {
-                'found': True, 'mode': 'deviation', 'window': window,
-                'has_vertical': True, 'event_type': 'parada',
-                'start': round(start, 3), 'end': round(end, 3),
-                't1': round(stop['t1'], 3), 't2': round(stop['t2'], 3),
-                'delta': delta_v, 'direction': None, 'side': 'NONE',
-                'stop_time': round(stop['t1'], 3),
-                'message': 'sem desvio: corte na parada (inicio da parada)',
-            }
-        # No desvio and no parada: free walk (caminhada livre). This is the only
-        # case where the *entire* video is the cut — unobstructed forward
-        # walking, start to finish, is its own class.
+        if stop is None:
+            # Manifest confirms a parada but the IMU stop detector was unsure: by
+            # the recording convention the halt closes the clip, so frame the
+            # decision window at the very end.
+            if force and duration_clip > 0:
+                delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
+                end = duration_clip
+                start = max(0.0, end - delta_v)
+                return {
+                    'found': True, 'mode': 'deviation', 'window': window,
+                    'has_vertical': True, 'event_type': 'parada',
+                    'start': round(start, 3), 'end': round(end, 3),
+                    't1': round(end, 3), 't2': round(end, 3),
+                    'delta': delta_v, 'direction': None, 'side': 'NONE',
+                    'stop_time': round(end, 3),
+                    'message': 'parada confirmada pelo manifesto; corte no fim do clipe',
+                }
+            return None
+        delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
+        windows = _event_windows(stop['t1'], stop['t2'], delta_v, stop['duration_s'])
+        win = windows.get(window) or windows.get('decisao')
+        start, end = float(win[0]), float(win[1])
+        if end - start < 0.2:  # near clip-start truncation: usable minimum
+            start = max(0.0, end - 0.2)
+        return {
+            'found': True, 'mode': 'deviation', 'window': window,
+            'has_vertical': True, 'event_type': 'parada',
+            'start': round(start, 3), 'end': round(end, 3),
+            't1': round(stop['t1'], 3), 't2': round(stop['t2'], 3),
+            'delta': delta_v, 'direction': None, 'side': 'NONE',
+            'stop_time': round(stop['t1'], 3),
+            'message': 'corte na parada (inicio da parada)',
+        }
+
+    def _livre_cut(force=False):
+        # Free walk (caminhada livre): the only class whose cut spans the *entire*
+        # video. `force` keeps the whole clip even when the gait detector is
+        # unsure, used when the manifest already confirms it is a free walk.
         try:
             free = detect_free_walk_span(idx)
         except Exception:
             free = None
-        if free is not None:
-            start, end = 0.0, float(free['duration_s'])
-            if end - start < 0.2:  # degenerate clip: keep a usable minimum
-                end = start + 0.2
-            return {
-                'found': True, 'mode': 'deviation', 'window': window,
-                'has_vertical': True, 'event_type': 'livre',
-                'start': round(start, 3), 'end': round(end, 3),
-                't1': round(start, 3), 't2': round(end, 3),
-                'delta': result.get('delta'), 'direction': None, 'side': 'NONE',
-                'message': 'sem desvio nem parada: caminhada livre (trecho util)',
-            }
-        return {'found': False, 'mode': 'deviation', 'has_vertical': True,
-                'message': 'nenhum desvio, parada ou caminhada detectados pela IMU'}
-    best = max(desvios, key=lambda e: e.get('strength', 0.0))
-    windows = best.get('windows', {})
-    win = windows.get(window) or windows.get('decisao') or [best['t1'], best['t2']]
-    start, end = float(win[0]), float(win[1])
-    if end - start < 0.2:  # near clip-start truncation: keep a usable minimum
-        start = max(0.0, end - 0.2)
-    side = {'esquerda': 'LEFT', 'direita': 'RIGHT'}.get(best.get('direction'), 'NONE')
-    return {
-        'found': True, 'mode': 'deviation', 'window': window, 'has_vertical': True,
-        'event_type': 'desvio',
-        'start': round(start, 3), 'end': round(end, 3),
-        't1': best['t1'], 't2': best['t2'], 'delta': result.get('delta'),
-        'direction': best.get('direction'), 'side': side,
-        'confidence': best.get('confidence'), 'strength': best.get('strength'),
-    }
+        if free is None and not force:
+            return None
+        dur = float(free['duration_s']) if free is not None else duration_clip
+        if dur <= 0:
+            return None
+        start, end = 0.0, dur
+        if end - start < 0.2:  # degenerate clip: keep a usable minimum
+            end = start + 0.2
+        return {
+            'found': True, 'mode': 'deviation', 'window': window,
+            'has_vertical': True, 'event_type': 'livre',
+            'start': round(start, 3), 'end': round(end, 3),
+            't1': round(start, 3), 't2': round(end, 3),
+            'delta': result.get('delta'), 'direction': None, 'side': 'NONE',
+            'message': 'caminhada livre (trecho util)',
+        }
+
+    not_found = {'found': False, 'mode': 'deviation', 'has_vertical': True,
+                 'message': 'nenhum desvio, parada ou caminhada detectados pela IMU'}
+
+    # Manifest ground truth decides the cut branch when the clip has a row.
+    if mk_type == 'livre':
+        return _livre_cut(force=True) or _parada_cut() or _desvio_cut(relax=True) or not_found
+    if mk_type == 'parada':
+        return _parada_cut(force=True) or _livre_cut(force=True) or not_found
+    if mk_type == 'desvio':
+        return (_desvio_cut(side_override=mk_side, relax=True)
+                or _parada_cut() or _livre_cut(force=True) or not_found)
+
+    # No manifest entry: keep the original IMU-first order (desvio→parada→livre).
+    return _desvio_cut() or _parada_cut() or _livre_cut() or not_found
 
 
 def _safe_clip_name(display):
@@ -3183,7 +3440,7 @@ def build_manifest_review(mode='lateral'):
 REVIEW_VIDEO_NAME = 'review_all_frames.mp4'
 REVIEW_INDEX_NAME = 'review_index.json'
 # Bump when the index schema changes so stale on-disk indexes get rebuilt.
-REVIEW_INDEX_VERSION = 3
+REVIEW_INDEX_VERSION = 5
 
 
 def _review_clip_video(group_dir, folder):
@@ -3319,6 +3576,7 @@ def build_review_index(group_dir, force=False):
         clips.append({
             'folder': folder,
             'source_display': row.get('source_display', ''),
+            'source_idx': src_idx,
             'start_frame': cursor,
             'frame_count': n,
             'end_frame': cursor + n,
@@ -3466,6 +3724,118 @@ def review_rebuild_video(group, mode):
     index = build_review_index(group_dir, force=True)
     return {'status': 'ok', 'group': group, 'mode': mode, 'videos': len(videos),
             'frames': frames, 'clips': len((index or {}).get('clips', []))}
+
+
+def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
+                      ssim_threshold=None, ssim_metric='ssim'):
+    """Re-cut one review clip to a new [start, end] window and rebuild the group.
+
+    Re-runs the same export pipeline (clean ffmpeg cut + sensors + ssim) that
+    produced the original cut, overwriting the clip's folder in place, updates its
+    sources.csv row, then rebuilds the group's review video + index so the new cut
+    shows up immediately. Any manual label override survives (it is keyed on the
+    folder name, which does not change).
+    """
+    import csv
+    group_dir = _manifest_group_dir(group, mode)
+    base = os.path.abspath(group_dir)
+    out_folder = os.path.abspath(os.path.join(base, folder))
+    if not out_folder.startswith(base + os.sep) or os.path.basename(out_folder) != folder:
+        return {'status': 'error', 'message': 'folder invalido'}
+
+    rows = _read_sources_rows(group_dir)
+    row = next((r for r in rows if r.get('output_folder') == folder), None)
+    if row is None:
+        return {'status': 'error', 'message': 'clipe nao encontrado em sources.csv'}
+
+    # Resolve the live source-clip index: the sources.csv display name wins; the
+    # caller's clip_idx is a fallback for when the CLIPS ordering has shifted.
+    idx = None
+    src_display = row.get('source_display', '')
+    if src_display:
+        try:
+            idx = CLIPS.index(src_display)
+        except ValueError:
+            idx = None
+    if idx is None and clip_idx is not None:
+        try:
+            ci = int(clip_idx)
+            if 0 <= ci < len(CLIPS):
+                idx = ci
+        except (TypeError, ValueError):
+            idx = None
+    if idx is None:
+        return {'status': 'error', 'message': 'clipe de origem nao encontrado'}
+
+    try:
+        start, end = float(start), float(end)
+    except (TypeError, ValueError):
+        return {'status': 'error', 'message': 'janela invalida'}
+    if not (end > start):
+        return {'status': 'error', 'message': 'fim deve ser maior que inicio'}
+
+    selection = ssim_frame_selection(idx, start, end,
+                                     threshold=ssim_threshold, metric=ssim_metric)
+
+    out_video = os.path.join(out_folder, folder + '.mp4')
+    if os.path.isdir(out_folder):
+        shutil.rmtree(out_folder, ignore_errors=True)
+    os.makedirs(out_folder)
+    try:
+        _ffmpeg_cut(clip_video_path(idx), start, end, out_video)
+    except Exception as e:
+        shutil.rmtree(out_folder, ignore_errors=True)
+        return {'status': 'error', 'message': f'ffmpeg_error: {e}'}
+
+    sensor_error = None
+    try:
+        save_sensor_data(idx, start, end, out_folder)
+    except Exception as e:
+        sensor_error = str(e)
+    try:
+        save_ssim_selection(selection, out_folder)
+        save_ssim_review_videos(idx, start, end, selection, out_folder)
+    except Exception:
+        pass
+
+    row.update(
+        start=f'{start:.3f}', end=f'{end:.3f}', duration=f'{end - start:.3f}',
+        frames_before=selection.get('frames_before', ''),
+        frames_after=selection.get('frames_after', ''),
+        ssim_threshold=selection.get('ssim_threshold', ''),
+        ssim_status=selection.get('error', 'ok'),
+        status=('ok_no_sensor: ' + sensor_error) if sensor_error else 'ok',
+    )
+    if rows:
+        with open(os.path.join(group_dir, 'sources.csv'), 'w', encoding='utf-8', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            w.writeheader(); w.writerows(rows)
+
+    # Patch the pinned index in place instead of re-encoding the whole review
+    # video (that concat is the slow part). The new cut is on disk + in
+    # sources.csv; we flag this clip pending so the UI shows the cut was saved but
+    # is not in review_all_frames.mp4 yet. Offsets/frame_count stay put — the
+    # existing video is untouched until the operator clicks "Reconstruir vídeo".
+    import json
+    index_path = os.path.join(group_dir, REVIEW_INDEX_NAME)
+    if os.path.isfile(index_path):
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index = json.load(f)
+            for c in index.get('clips', []):
+                if c.get('folder') == folder:
+                    c['cut_start'] = f'{start:.3f}'
+                    c['cut_end'] = f'{end:.3f}'
+                    c['duration'] = f'{end - start:.3f}'
+                    c['recut_pending'] = True
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(index, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+
+    return {'status': 'ok', 'group': group, 'mode': mode, 'folder': folder,
+            'start': f'{start:.3f}', 'end': f'{end:.3f}',
+            'duration': f'{end - start:.3f}', 'recut_pending': True}
 
 
 # ─── Deviation inspection video ──────────────────────────────────────────────
@@ -4097,6 +4467,30 @@ def api_revisao_rebuild():
         return jsonify({'status': 'error', 'message': 'group obrigatorio'}), 400
     try:
         result = review_rebuild_video(group, mode)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
+
+@app.route('/api/revisao/recut', methods=['POST'])
+def api_revisao_recut():
+    body = request.json or {}
+    group = body.get('group', '')
+    mode = body.get('mode', 'deviation')
+    folder = body.get('folder', '')
+    if not group or not folder:
+        return jsonify({'status': 'error', 'message': 'group e folder obrigatorios'}), 400
+    if body.get('start') is None or body.get('end') is None:
+        return jsonify({'status': 'error', 'message': 'start e end obrigatorios'}), 400
+    try:
+        ssim_metric = _coerce_metric(body.get('ssim_metric'))
+        ssim_threshold = _body_ssim_threshold(body, metric=ssim_metric)
+    except ValueError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 400
+    try:
+        result = review_recut_clip(
+            group, mode, folder, body.get('start'), body.get('end'),
+            clip_idx=body.get('clip_idx'),
+            ssim_threshold=ssim_threshold, ssim_metric=ssim_metric)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
     return jsonify(result), (200 if result.get('status') == 'ok' else 400)

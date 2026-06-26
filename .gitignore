@@ -15,6 +15,10 @@ data/**
 !data/
 !data/**/
 !data/**/.gitkeep
+# Collection manifests (ground-truth clip labels) ARE version-controlled so the
+# suggested cuts are identical on every machine that runs the code.
+!data/labels/
+!data/labels/*.xlsx
 logs/**
 !logs/
 !logs/.gitkeep

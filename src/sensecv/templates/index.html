@@ -490,6 +490,14 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <div class="view" data-view="anotar">
     <!-- Crop -->
     <div class="section" id="crop-section">
+      <div id="recut-banner" class="hidden" style="margin-bottom:10px;padding:10px 12px;border:1px solid #2d6aa0;border-radius:10px;background:#15324a;color:#cfe6ff">
+        <div style="font-weight:600;margin-bottom:6px">Recortando para a Revisão</div>
+        <div id="recut-banner-info" style="font-size:.85em;color:#9fc6ec;margin-bottom:8px"></div>
+        <div class="upload-row" style="gap:8px">
+          <button class="btn" id="recut-save">Salvar novo corte na revisão</button>
+          <button class="btn" id="recut-cancel">Cancelar</button>
+        </div>
+      </div>
       <h3>Recortar clipe</h3>
       <div class="crop-grid">
         <div class="crop-point" id="crop-start-box">
@@ -733,8 +741,12 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
           </label>
           <span id="rev-label-note" style="color:#9aa0a6;font-size:.8em"></span>
         </div>
-        <button class="btn danger" id="rev-exclude">Excluir clipe atual</button>
+        <div class="upload-row" style="gap:8px">
+          <button class="btn" id="rev-recut">Recortar no clipe original →</button>
+          <button class="btn danger" id="rev-exclude">Excluir clipe atual</button>
+        </div>
       </div>
+      <div id="rev-recut-changes" style="margin-top:10px"></div>
       <div id="rev-excluded" style="margin-top:10px"></div>
     </div>
     </div><!-- end view: revisao -->
@@ -978,14 +990,16 @@ function buildClipSelect(activeIdx) {
 }
 
 document.getElementById('clip-select').addEventListener('change', e => {
+  if(typeof cancelRecut === 'function') cancelRecut();
   loadClip(parseInt(e.target.value));
 });
 document.getElementById('group-select').addEventListener('change', e => {
+  if(typeof cancelRecut === 'function') cancelRecut();
   loadClip(parseInt(e.target.value));
 });
 
 // ═══ Load clip ══════════════════════════════════
-async function loadClip(idx) {
+async function loadClip(idx, opts={}) {
   if (idx < 0 || idx >= TOTAL) return;
   showOverlay(`Carregando clipe ${idx+1}/${TOTAL}…`);
 
@@ -1038,7 +1052,9 @@ async function loadClip(idx) {
 
   // Automatically prefer lateral-deviation cuts; use other modes only as fallbacks.
   requestDronet(true);
-  runAutoSuggest();
+  // In recut mode the caller sets the existing cut window itself, so skip the
+  // auto-suggest that would otherwise overwrite it.
+  if(!opts.skipAutoSuggest) runAutoSuggest();
 }
 
 function showNoClipsState(){
@@ -2412,10 +2428,17 @@ const revEl = {
   label:    document.getElementById('rev-label'),
   labelNote:document.getElementById('rev-label-note'),
   exclude:  document.getElementById('rev-exclude'),
+  recut:    document.getElementById('rev-recut'),
+  changes:  document.getElementById('rev-recut-changes'),
   excluded: document.getElementById('rev-excluded'),
 };
 let revIndex = null;       // {fps,total_frames,video_url,clips:[...]}
 let revCurrentClip = null;
+// When set, the Anotar view is recutting a review clip back into its group.
+let revRecutTarget = null; // {group,mode,folder,source_display,returnTime}
+// True for one setView('revisao') after a recut save: skip the heavy reload so
+// we keep the current video + playhead instead of re-fetching the index.
+let revReturnFromRecut = false;
 
 function revSetStatus(msg){ revEl.status.textContent = msg || ''; }
 
@@ -2456,6 +2479,7 @@ async function revLoadIndex(group){
   revSetStatus(`${activeClips.length} clipe(s) ativos · ${data.total_frames} frames @ ${data.fps} fps` +
                (dist ? ' — ' + dist : ''));
   revRenderExcluded();
+  revRenderChanges();
   revUpdateCurrent();
 }
 
@@ -2479,11 +2503,15 @@ function revUpdateCurrent(){
   if(!clip){ revEl.current.classList.add('hidden'); return; }
   revEl.current.classList.remove('hidden');
   const badge = `<span class="rev-badge" data-kind="${clip.label_kind || 'desconhecido'}">${clip.label || '—'}</span>`;
-  revEl.curName.innerHTML = badge +
+  const pending = clip.recut_pending
+    ? '<span class="rev-badge" data-kind="parada" title="O novo corte foi salvo, mas o vídeo de revisão ainda mostra o corte antigo. Clique em Reconstruir vídeo.">novo corte salvo · reconstrua</span>'
+    : '';
+  revEl.curName.innerHTML = badge + pending +
     '<span>' + clip.folder + (clip.excluded ? '  — JÁ EXCLUÍDO' : '') + '</span>';
   revEl.curMeta.textContent =
     `${clip.source_display} · corte ${clip.cut_start}–${clip.cut_end}s (${clip.duration}s) · ` +
-    `frames ${clip.start_frame}–${clip.end_frame - 1}`;
+    `frames ${clip.start_frame}–${clip.end_frame - 1}` +
+    (clip.recut_pending ? ' · (vídeo ainda mostra o corte antigo)' : '');
   if(clip.label_kind && [...revEl.label.options].some(o => o.value === clip.label_kind))
     revEl.label.value = clip.label_kind;
   revEl.label.disabled = !!clip.excluded;
@@ -2491,6 +2519,12 @@ function revUpdateCurrent(){
     ? `manual (detectado: ${clip.detected_label || '—'})` : 'detectado automaticamente';
   revEl.exclude.disabled = !!clip.excluded;
   revEl.exclude.textContent = clip.excluded ? 'Clipe já excluído' : 'Excluir clipe atual';
+  // Recut needs a resolvable source clip; disable it when the clip is gone or
+  // its source can't be located in the current CLIPS list (by display name, or
+  // by the index's stored source_idx as a fallback).
+  const canRecut = !clip.excluded && revResolveSourceIdx(clip) >= 0;
+  revEl.recut.disabled = !canRecut;
+  revEl.recut.title = canRecut ? '' : 'Clipe de origem indisponível para recorte';
 }
 
 function revRenderExcluded(){
@@ -2499,6 +2533,17 @@ function revRenderExcluded(){
   revEl.excluded.innerHTML = ex.length
     ? '<div style="color:#9aa0a6;font-size:.82em;margin-bottom:2px">Excluídos (some na próxima reconstrução):</div>' +
       ex.map(c => `<div class="rev-excluded-item"><span>${c.label || ''} · ${c.folder}</span></div>`).join('')
+    : '';
+}
+
+// Persistent list (bottom of the page) of every clip whose cut was changed but
+// not yet rebuilt into the review video — independent of the current playhead.
+function revRenderChanges(){
+  if(!revIndex){ revEl.changes.innerHTML=''; return; }
+  const ch = revIndex.clips.filter(c => c.recut_pending && !c.excluded);
+  revEl.changes.innerHTML = ch.length
+    ? '<div style="color:#ffc46b;font-size:.82em;margin-bottom:2px">Cortes alterados (clique em “Reconstruir vídeo” para aplicar):</div>' +
+      ch.map(c => `<div class="rev-excluded-item"><span>${c.folder} · novo corte ${c.cut_start}–${c.cut_end}s (${c.duration}s)</span><span class="rev-badge" data-kind="parada">pendente</span></div>`).join('')
     : '';
 }
 
@@ -2530,6 +2575,7 @@ async function revExcludeCurrent(){
   clip.excluded = true;
   revSetStatus(`Excluído ${clip.folder}. Restam ${data.remaining} clipe(s). Reconstrua o vídeo quando terminar.`);
   revRenderExcluded();
+  revRenderChanges();
   revUpdateCurrent();
 }
 
@@ -2556,6 +2602,104 @@ async function revChangeLabel(){
   revUpdateCurrent();
 }
 
+// Resolve a review clip back to its index in the live CLIPS list. Prefer the
+// display name (robust if the dataset order changed since the index was cached);
+// fall back to the index's stored source_idx. Returns -1 when unresolvable.
+function revResolveSourceIdx(clip){
+  if(!clip) return -1;
+  if(clip.source_display){
+    const i = CLIPS.indexOf(clip.source_display);
+    if(i >= 0) return i;
+  }
+  if(clip.source_idx != null && clip.source_idx >= 0 && clip.source_idx < CLIPS.length)
+    return clip.source_idx;
+  return -1;
+}
+
+// Jump to the source clip in Anotar, preloaded with this cut's window, so the
+// operator can re-mark start/end (and use suggest / IMU / SSIM tools) and save
+// the new cut straight back into the review group.
+async function revRecutCurrent(){
+  if(!revCurrentClip || revCurrentClip.excluded) return;
+  const clip = revCurrentClip;
+  const srcIdx = revResolveSourceIdx(clip);
+  if(srcIdx < 0){ showToast('Clipe de origem indisponível', 'err'); return; }
+  revRecutTarget = {
+    group: revIndex.group || revEl.group.value,
+    mode: 'deviation',
+    folder: clip.folder,
+    source_display: clip.source_display || '',
+    returnTime: revEl.video.currentTime,   // restore this spot after saving
+  };
+  await loadClip(srcIdx, {skipAutoSuggest:true});
+  setView('anotar');
+  // Seed the crop window from the existing cut so the operator only nudges it.
+  const s = parseFloat(clip.cut_start), e = parseFloat(clip.cut_end);
+  if(isFinite(s) && isFinite(e) && e > s){
+    applyImuWindow(s, e);
+  }
+  showRecutBanner();
+  showToast('Ajuste o corte e clique "Salvar novo corte na revisão".', 'ok');
+}
+
+function showRecutBanner(){
+  const banner = document.getElementById('recut-banner');
+  if(!banner) return;
+  if(!revRecutTarget){ banner.classList.add('hidden'); return; }
+  document.getElementById('recut-banner-info').textContent =
+    `${revRecutTarget.folder} · grupo ${revRecutTarget.group}`;
+  banner.classList.remove('hidden');
+}
+
+function cancelRecut(){
+  revRecutTarget = null;
+  const banner = document.getElementById('recut-banner');
+  if(banner) banner.classList.add('hidden');
+}
+
+async function saveRecut(){
+  if(!revRecutTarget){ return; }
+  if(cropStart == null || cropEnd == null || cropEnd <= cropStart){
+    showToast('Defina início e fim válidos antes de salvar.', 'err'); return;
+  }
+  const btn = document.getElementById('recut-save');
+  btn.disabled = true; btn.textContent = 'Salvando…';
+  let data;
+  try {
+    data = await (await fetch('/api/revisao/recut', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        group: revRecutTarget.group, mode: revRecutTarget.mode,
+        folder: revRecutTarget.folder, clip_idx: currentIdx,
+        start: cropStart, end: cropEnd,
+        ssim_metric: getSsimMetric(), ssim_threshold: getSsimThreshold(),
+      })
+    })).json();
+  } catch(e){ showToast('Falha: ' + e, 'err'); btn.disabled=false; btn.textContent='Salvar novo corte na revisão'; return; }
+  btn.disabled = false; btn.textContent = 'Salvar novo corte na revisão';
+  if(data.status !== 'ok'){ showToast(data.message || 'erro ao recortar', 'err'); return; }
+  const tgt = revRecutTarget;
+  // Patch the in-memory clip so the panel reflects the new cut right away. We do
+  // NOT reload/rebuild — the review video keeps its old frames (and our place in
+  // it) until the operator clicks "Reconstruir vídeo".
+  if(revIndex){
+    const c = revIndex.clips.find(x => x.folder === tgt.folder);
+    if(c){ c.cut_start = data.start; c.cut_end = data.end;
+           c.duration = data.duration; c.recut_pending = true; }
+  }
+  revRenderChanges();
+  cancelRecut();
+  showToast(`✓ Corte de ${data.folder} salvo (${data.duration}s). Reconstrua o vídeo para visualizá-lo.`, 'ok');
+  // Return to Revisão at the same spot, without the heavy reload.
+  revReturnFromRecut = true;
+  setView('revisao');
+  if(tgt.returnTime != null && isFinite(tgt.returnTime)){
+    try { revEl.video.currentTime = tgt.returnTime; } catch(e){}
+  }
+  revUpdateCurrent();
+  return;
+}
+
 async function revRebuild(){
   const group = revEl.group.value;
   if(!group) return;
@@ -2579,6 +2723,9 @@ revEl.reload.addEventListener('click', revLoadGroups);
 revEl.group.addEventListener('change', () => revLoadIndex(revEl.group.value));
 revEl.rebuild.addEventListener('click', revRebuild);
 revEl.exclude.addEventListener('click', revExcludeCurrent);
+revEl.recut.addEventListener('click', revRecutCurrent);
+document.getElementById('recut-save').addEventListener('click', saveRecut);
+document.getElementById('recut-cancel').addEventListener('click', cancelRecut);
 revEl.label.addEventListener('change', revChangeLabel);
 revEl.prev.addEventListener('click', () => revStep(-1));
 revEl.next.addEventListener('click', () => revStep(1));
@@ -2612,8 +2759,12 @@ function setView(name){
   if(name === 'frames'){ loadSsimVisualizer(); }
   // Entering the activation window: compute Grad-CAM maps for the current frame.
   if(name === 'ativacao'){ requestActivation(true); }
-  // Entering revisão: load the list of groups that have a review video.
-  if(name === 'revisao'){ revLoadGroups(); }
+  // Entering revisão: load the list of groups that have a review video — unless
+  // we are returning from a recut save, where we keep the current view/playhead.
+  if(name === 'revisao'){
+    if(revReturnFromRecut){ revReturnFromRecut = false; }
+    else { revLoadGroups(); }
+  }
 }
 document.querySelectorAll('#tabbar .tab').forEach(t =>
   t.addEventListener('click', () => setView(t.dataset.view)));

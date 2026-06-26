@@ -1,0 +1,4 @@
+# Shell scripts must keep LF endings or they break on macOS/Linux (a CRLF in the
+# shebang line makes the interpreter lookup fail). Force LF regardless of host.
+*.sh        text eol=lf
+*.command   text eol=lf
