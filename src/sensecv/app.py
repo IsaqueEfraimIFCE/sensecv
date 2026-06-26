@@ -3851,14 +3851,10 @@ def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
 # ─── Revisão: import an external cut-dataset (e.g. datasetcortado) ────────────
 # A cut-dataset is a folder of per-clip subfolders, each holding the trimmed
 # clip video (and optionally cut_info.json with its class). `datasetcortado`
-# (scripts/make_datasetcortado.py) is the canonical example. Importing copies the
-# clip videos into a manifest_exports review group and builds the review video +
-# index, so the existing Revisão tools (exclude / relabel / recut / rebuild) work
-# on it unchanged.
-_REVIEW_IMPORT_EXCLUDE = {
-    'clips', 'datasets', 'derived', 'uploaded_datasets', 'labels',
-    'exports', 'models', 'dronet_results',
-}
+# (scripts/make_datasetcortado.py) is the canonical example. Uploading a .zip of
+# one copies the clip videos into a manifest_exports review group and builds the
+# review video + index, so the existing Revisão tools (exclude / relabel / recut
+# / rebuild) work on it unchanged.
 
 
 def _read_cut_info(group_dir, folder):
@@ -3902,25 +3898,6 @@ def _find_cut_dataset_root(base):
         if score > best_score:
             best, best_score = cur, score
     return best
-
-
-def list_local_cut_datasets():
-    """Cut-datasets sitting under DATA_DIR that can be imported for review."""
-    out = []
-    if not os.path.isdir(DATA_DIR):
-        return out
-    existing = {g['group'] for g in list_review_groups('deviation')}
-    for name in sorted(os.listdir(DATA_DIR)):
-        if name in _REVIEW_IMPORT_EXCLUDE:
-            continue
-        d = os.path.join(DATA_DIR, name)
-        if not os.path.isdir(d):
-            continue
-        n = sum(1 for _ in _iter_cut_clips(d))
-        if n > 0 or os.path.isfile(os.path.join(d, 'sources.csv')):
-            out.append({'name': name, 'clips': n,
-                        'imported': _safe_clip_name(name) in existing})
-    return out
 
 
 def ingest_review_dataset(src_dir, group, mode='deviation'):
@@ -4651,28 +4628,6 @@ def api_revisao_recut():
             group, mode, folder, body.get('start'), body.get('end'),
             clip_idx=body.get('clip_idx'),
             ssim_threshold=ssim_threshold, ssim_metric=ssim_metric)
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
-
-@app.route('/api/revisao/local-datasets')
-def api_revisao_local_datasets():
-    return jsonify({'status': 'ok', 'datasets': list_local_cut_datasets()})
-
-@app.route('/api/revisao/import', methods=['POST'])
-def api_revisao_import():
-    body = request.json or {}
-    name = (body.get('name') or '').strip()
-    if not name:
-        return jsonify({'status': 'error', 'message': 'nome do dataset obrigatorio'}), 400
-    # Resolve against DATA_DIR only (never an arbitrary path from the client).
-    base = os.path.abspath(DATA_DIR)
-    src_dir = os.path.abspath(os.path.join(base, name))
-    if os.path.dirname(src_dir) != base or not os.path.isdir(src_dir) \
-            or os.path.basename(src_dir) in _REVIEW_IMPORT_EXCLUDE:
-        return jsonify({'status': 'error', 'message': 'dataset invalido'}), 400
-    try:
-        result = ingest_review_dataset(src_dir, name)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
     return jsonify(result), (200 if result.get('status') == 'ok' else 400)

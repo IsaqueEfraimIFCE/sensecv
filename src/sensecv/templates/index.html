@@ -692,13 +692,14 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <div class="section">
       <h3>Revisão dos cortes</h3>
       <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
-        Reproduz o <code>review_all_frames.mp4</code> de cada grupo (todos os
-        cortes concatenados). Pause em qualquer <strong>frame errado</strong>: o
-        clipe correspondente é identificado abaixo. Clique em
-        <strong>Excluir clipe</strong> para apagar a pasta inteira daquele clipe
-        em <code>data/derived/manifest_exports/&lt;grupo&gt;/deviation/</code>.
-        Depois, <strong>Reconstruir vídeo</strong> regenera a revisão só com os
-        clipes que sobraram.
+        Envie um <strong>dataset de cortes em .zip</strong> (no formato do
+        <code>datasetcortado</code>: uma subpasta por clipe com o vídeo cortado)
+        para revisá-lo aqui — ou escolha um grupo já existente. Reproduz o
+        <code>review_all_frames.mp4</code> (todos os cortes concatenados). Pause
+        em qualquer <strong>frame errado</strong>: o clipe correspondente é
+        identificado abaixo. Use <strong>Excluir clipe</strong>, ajuste o
+        <strong>rótulo</strong> ou <strong>recorte</strong> o clipe; depois
+        <strong>Reconstruir vídeo</strong> regenera a revisão.
       </p>
       <div class="upload-row" style="flex-wrap:wrap;align-items:center;gap:8px">
         <select id="rev-group" style="min-width:18em"></select>
@@ -706,11 +707,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <button class="btn" id="rev-rebuild">Reconstruir vídeo</button>
       </div>
       <div class="upload-row" style="flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px">
-        <span style="color:#9aa0a6;font-size:.85em">Importar dataset de cortes:</span>
-        <select id="rev-local" style="min-width:14em"></select>
-        <button class="btn" id="rev-import">Importar</button>
-        <span style="color:#666">ou</span>
-        <input type="file" id="rev-zip" accept=".zip" style="max-width:15em">
+        <span style="color:#9aa0a6;font-size:.85em">Revisar dataset de cortes (.zip):</span>
+        <input type="file" id="rev-zip" accept=".zip" style="max-width:18em">
         <button class="btn" id="rev-upload">Enviar .zip</button>
       </div>
       <div class="dronet-status" id="rev-status"></div>
@@ -2423,8 +2421,6 @@ const revEl = {
   group:    document.getElementById('rev-group'),
   reload:   document.getElementById('rev-reload'),
   rebuild:  document.getElementById('rev-rebuild'),
-  local:    document.getElementById('rev-local'),
-  import_:  document.getElementById('rev-import'),
   zip:      document.getElementById('rev-zip'),
   upload:   document.getElementById('rev-upload'),
   status:   document.getElementById('rev-status'),
@@ -2454,37 +2450,6 @@ let revReturnFromRecut = false;
 
 function revSetStatus(msg){ revEl.status.textContent = msg || ''; }
 
-async function revLoadLocalDatasets(){
-  let data;
-  try { data = await (await fetch('/api/revisao/local-datasets')).json(); }
-  catch(e){ return; }
-  const ds = data.datasets || [];
-  revEl.local.innerHTML = ds.length
-    ? ds.map(d => `<option value="${d.name}">${d.name} (${d.clips} clipes)${d.imported ? ' ✓' : ''}</option>`).join('')
-    : '<option value="">— nenhum dataset local —</option>';
-  revEl.import_.disabled = !ds.length;
-}
-
-async function revImportLocal(){
-  const name = revEl.local.value;
-  if(!name) return;
-  if(!confirm(`Importar "${name}" para a revisão? Os cortes serão copiados e o vídeo de revisão será montado (pode demorar para datasets grandes).`)) return;
-  revEl.import_.disabled = true;
-  revSetStatus(`Importando ${name}… montando vídeo de revisão (pode demorar).`);
-  let data;
-  try {
-    data = await (await fetch('/api/revisao/import', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({name})
-    })).json();
-  } catch(e){ revSetStatus('Falha: ' + e); revEl.import_.disabled=false; return; }
-  revEl.import_.disabled = false;
-  if(data.status !== 'ok'){ revSetStatus(data.message || 'erro ao importar'); return; }
-  await revLoadGroups();
-  if(data.group){ revEl.group.value = data.group; revLoadIndex(data.group); }
-  revSetStatus(`Importado "${data.group}": ${data.clips} clipe(s).`);
-}
-
 async function revUploadZip(){
   const file = revEl.zip.files && revEl.zip.files[0];
   if(!file){ revSetStatus('Escolha um arquivo .zip primeiro.'); return; }
@@ -2505,7 +2470,6 @@ async function revUploadZip(){
 
 async function revLoadGroups(){
   revSetStatus('Carregando grupos…');
-  revLoadLocalDatasets();
   let data;
   try { data = await (await fetch('/api/revisao/groups?mode=deviation')).json(); }
   catch(e){ revSetStatus('Falha ao carregar grupos: ' + e); return; }
@@ -2782,7 +2746,6 @@ async function revRebuild(){
 }
 
 revEl.reload.addEventListener('click', revLoadGroups);
-revEl.import_.addEventListener('click', revImportLocal);
 revEl.upload.addEventListener('click', revUploadZip);
 revEl.group.addEventListener('change', () => revLoadIndex(revEl.group.value));
 revEl.rebuild.addEventListener('click', revRebuild);
