@@ -3559,7 +3559,17 @@ def build_review_index(group_dir, force=False):
             continue
         event_type, side = '', ''
         src_idx = folder_to_idx.get(folder)
-        if src_idx is not None:
+        # Prefer the class the dataset already carries (an imported cut-dataset
+        # ledgers event_type/side in sources.csv or each clip's cut_info.json), so
+        # the labels survive even when the source clip isn't loaded. Fall back to
+        # re-deriving from the live clip's IMU + manifest.
+        event_type = (row.get('event_type', '') or '').strip()
+        side = (row.get('side', '') or '').strip()
+        if not event_type:
+            info = _read_cut_info(group_dir, folder)
+            event_type = (info.get('event_type', '') or '').strip()
+            side = (info.get('side', '') or '').strip()
+        if not event_type and src_idx is not None:
             try:
                 sug = suggest_deviation_cut(src_idx)
                 event_type = sug.get('event_type', '') or ''
@@ -3836,6 +3846,156 @@ def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
     return {'status': 'ok', 'group': group, 'mode': mode, 'folder': folder,
             'start': f'{start:.3f}', 'end': f'{end:.3f}',
             'duration': f'{end - start:.3f}', 'recut_pending': True}
+
+
+# ─── Revisão: import an external cut-dataset (e.g. datasetcortado) ────────────
+# A cut-dataset is a folder of per-clip subfolders, each holding the trimmed
+# clip video (and optionally cut_info.json with its class). `datasetcortado`
+# (scripts/make_datasetcortado.py) is the canonical example. Importing copies the
+# clip videos into a manifest_exports review group and builds the review video +
+# index, so the existing Revisão tools (exclude / relabel / recut / rebuild) work
+# on it unchanged.
+_REVIEW_IMPORT_EXCLUDE = {
+    'clips', 'datasets', 'derived', 'uploaded_datasets', 'labels',
+    'exports', 'models', 'dronet_results',
+}
+
+
+def _read_cut_info(group_dir, folder):
+    """A clip's cut_info.json (class/window), if the dataset shipped one."""
+    import json
+    path = os.path.join(group_dir, folder, 'cut_info.json')
+    if os.path.isfile(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def _iter_cut_clips(root):
+    """Yield (folder_name, clip_dir, video_path) for subfolders that hold a video."""
+    if not os.path.isdir(root):
+        return
+    for name in sorted(os.listdir(root)):
+        clip_dir = os.path.join(root, name)
+        if not os.path.isdir(clip_dir):
+            continue
+        video = _clip_video_file(clip_dir)
+        if video:
+            yield name, clip_dir, video
+
+
+def _find_cut_dataset_root(base):
+    """Locate the directory that actually holds the clip subfolders.
+
+    An uploaded zip may wrap the dataset in one or more parent folders; pick the
+    directory with the most clip subfolders (ties broken by a sources.csv).
+    """
+    best, best_score = None, 0
+    for cur, _dirs, files in os.walk(base):
+        n = sum(1 for _ in _iter_cut_clips(cur))
+        if n == 0 and 'sources.csv' not in files:
+            continue
+        score = n * 2 + (1 if 'sources.csv' in files else 0)
+        if score > best_score:
+            best, best_score = cur, score
+    return best
+
+
+def list_local_cut_datasets():
+    """Cut-datasets sitting under DATA_DIR that can be imported for review."""
+    out = []
+    if not os.path.isdir(DATA_DIR):
+        return out
+    existing = {g['group'] for g in list_review_groups('deviation')}
+    for name in sorted(os.listdir(DATA_DIR)):
+        if name in _REVIEW_IMPORT_EXCLUDE:
+            continue
+        d = os.path.join(DATA_DIR, name)
+        if not os.path.isdir(d):
+            continue
+        n = sum(1 for _ in _iter_cut_clips(d))
+        if n > 0 or os.path.isfile(os.path.join(d, 'sources.csv')):
+            out.append({'name': name, 'clips': n,
+                        'imported': _safe_clip_name(name) in existing})
+    return out
+
+
+def ingest_review_dataset(src_dir, group, mode='deviation'):
+    """Copy a cut-dataset into a review group and build its review video + index.
+
+    Only the clip videos (renamed to <folder>/<folder>.mp4) and any cut_info.json
+    are copied — that is all the review needs. A normalized sources.csv is written
+    from the dataset's own ledger (or synthesized from the folders), then the
+    review video and frame→clip index are built.
+    """
+    import csv
+    import json
+    clips = list(_iter_cut_clips(src_dir))
+    if not clips:
+        return {'status': 'error',
+                'message': 'dataset sem clipes (esperado subpastas com .mp4)'}
+
+    group_dir = _manifest_group_dir(group, mode)
+    if os.path.isdir(group_dir):
+        shutil.rmtree(group_dir, ignore_errors=True)
+    os.makedirs(group_dir, exist_ok=True)
+
+    # Pull any per-clip labels the dataset already carries.
+    src_rows = {}
+    src_csv = os.path.join(src_dir, 'sources.csv')
+    if os.path.isfile(src_csv):
+        try:
+            with open(src_csv, 'r', encoding='utf-8', newline='') as f:
+                for r in csv.DictReader(f):
+                    if r.get('output_folder'):
+                        src_rows[r['output_folder']] = r
+        except Exception:
+            src_rows = {}
+
+    fields = ['output_folder', 'source_display', 'start', 'end', 'duration',
+              'event_type', 'side', 'status']
+    rows = []
+    for folder, clip_dir, video in clips:
+        dst = os.path.join(group_dir, folder)
+        os.makedirs(dst, exist_ok=True)
+        shutil.copy2(video, os.path.join(dst, folder + '.mp4'))
+        info = {}
+        ci = os.path.join(clip_dir, 'cut_info.json')
+        if os.path.isfile(ci):
+            try:
+                with open(ci, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+            except Exception:
+                info = {}
+            try:
+                shutil.copy2(ci, os.path.join(dst, 'cut_info.json'))
+            except Exception:
+                pass
+        sr = src_rows.get(folder, {})
+        rows.append({
+            'output_folder': folder,
+            'source_display': sr.get('source_display') or info.get('source_display') or folder,
+            'start': sr.get('start') or info.get('start', ''),
+            'end': sr.get('end') or info.get('end', ''),
+            'duration': sr.get('duration') or info.get('duration', ''),
+            'event_type': sr.get('event_type') or info.get('event_type', ''),
+            'side': sr.get('side') or info.get('side', ''),
+            'status': sr.get('status') or 'ok',
+        })
+
+    with open(os.path.join(group_dir, 'sources.csv'), 'w', encoding='utf-8', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader(); w.writerows(rows)
+
+    rebuilt = review_rebuild_video(group, mode)
+    if rebuilt.get('status') != 'ok':
+        return {'status': 'error',
+                'message': rebuilt.get('message', 'falha ao montar o vídeo de revisão')}
+    return {'status': 'ok', 'group': _safe_clip_name(group), 'mode': mode,
+            'clips': len(rows), 'frames': rebuilt.get('frames')}
 
 
 # ─── Deviation inspection video ──────────────────────────────────────────────
@@ -4493,6 +4653,57 @@ def api_revisao_recut():
             ssim_threshold=ssim_threshold, ssim_metric=ssim_metric)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
+
+@app.route('/api/revisao/local-datasets')
+def api_revisao_local_datasets():
+    return jsonify({'status': 'ok', 'datasets': list_local_cut_datasets()})
+
+@app.route('/api/revisao/import', methods=['POST'])
+def api_revisao_import():
+    body = request.json or {}
+    name = (body.get('name') or '').strip()
+    if not name:
+        return jsonify({'status': 'error', 'message': 'nome do dataset obrigatorio'}), 400
+    # Resolve against DATA_DIR only (never an arbitrary path from the client).
+    base = os.path.abspath(DATA_DIR)
+    src_dir = os.path.abspath(os.path.join(base, name))
+    if os.path.dirname(src_dir) != base or not os.path.isdir(src_dir) \
+            or os.path.basename(src_dir) in _REVIEW_IMPORT_EXCLUDE:
+        return jsonify({'status': 'error', 'message': 'dataset invalido'}), 400
+    try:
+        result = ingest_review_dataset(src_dir, name)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
+
+@app.route('/api/revisao/upload', methods=['POST'])
+def api_revisao_upload():
+    upload = request.files.get('zip') or request.files.get('file')
+    if not upload or not upload.filename:
+        return jsonify({'status': 'error', 'message': 'Arquivo .zip ausente'}), 400
+    if not upload.filename.lower().endswith('.zip'):
+        return jsonify({'status': 'error', 'message': 'Envie um arquivo .zip'}), 400
+    group = (request.form.get('name') or '').strip() \
+        or os.path.splitext(os.path.basename(upload.filename))[0]
+    tmp = _unique_dir(os.path.join(DERIVED_DIR, 'review_uploads'), upload.filename)
+    try:
+        with zipfile.ZipFile(upload.stream) as zf:
+            bad = zf.testzip()
+            if bad:
+                raise ValueError(f'arquivo corrompido dentro do zip: {bad}')
+            _safe_extract_zip(zf, tmp)
+        root = _find_cut_dataset_root(tmp)
+        if not root:
+            return jsonify({'status': 'error',
+                            'message': 'o zip nao contem subpastas de clipes com .mp4'}), 400
+        result = ingest_review_dataset(root, group)
+    except zipfile.BadZipFile:
+        return jsonify({'status': 'error', 'message': 'Zip invalido ou corrompido'}), 400
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     return jsonify(result), (200 if result.get('status') == 'ok' else 400)
 
 @app.route('/api/crop', methods=['POST'])
