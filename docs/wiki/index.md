@@ -1,7 +1,7 @@
 ---
 type: meta
 tags: [index, catalog]
-updated: 2026-06-12
+updated: 2026-06-19
 ---
 
 # Wiki Index
@@ -48,6 +48,7 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[export-pipeline]] | Re-encoded ffmpeg cut plus time-rebased sensor save and history | `app.py` |
 | [[video-sensor-sync]] | Playing video with charts/cursor/timeline in lockstep | `templates/index.html` |
 | [[dataset-normalization]] | Rebuilding clip folders at 14.730 FPS video and 420 Hz sensors | `normalize_dataset_rates.py` |
+| [[activation-maps]] | Grad-CAM heatmaps for the DroNet collision head and the SenseCV two-head obstacle/deviation heads, shown in the Ativação tab | `src/sensecv/app.py`, `src/sensecv/templates/index.html` |
 | [[dronet-overview]] | DroNet research/runtime source layer vendored into SenseCV | `third_party/dronet/` |
 | [[dronet-paper]] | Loquercio et al. DroNet paper claims, scope, and caveats | `third_party/dronet/RAL18_Loquercio.pdf` |
 | [[model-architecture]] | Upstream Keras ResNet-8 and local PyTorch compatibility port | `third_party/dronet/dronet_model.py` |
@@ -59,4 +60,4 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[imu-event-labeling]] | IMU capture validation, T1/T2 event detection, and decision-window labeling from the criterios PDF | `app.py`, `scripts/imu_event_report.py` |
 
 ## Page count
-- Meta: 6; Entities: 15; Concepts: 17 -> **38 pages**
+- Meta: 6; Entities: 15; Concepts: 18 -> **39 pages**

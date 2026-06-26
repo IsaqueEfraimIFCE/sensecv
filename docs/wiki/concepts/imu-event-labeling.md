@@ -50,6 +50,12 @@ Verdict: `aceitar` (all pass), `baixa_confianca` (minor fails), `rejeitar`
 - **reducao** — walking energy persistently below 60% of its rolling 3 s
   baseline without reaching standstill.
 - **parada** — gait energy below 0.25 m/s² for ≥ 1 s (`SENSECV_IMU_STOP_MIN_SEC`).
+  A separate **confirmed stop-onset detector** (`detect_stop_onset`, used only as
+  the no-desvio deviation-cut fallback, see below) returns the onset of a
+  standstill that is **preceded by walking, not walked out of, and lasts
+  `≥ SENSECV_IMU_STOP_CONFIRM_SEC` (0.8 s)** — a genuine halt the person stays in,
+  not a brief mid-walk pause. On gimbal captures that end mid-stride this fires on
+  **no** clip (0/389), because the recording stops before a standstill settles.
 
 ## Label windows (PDF sections 2.2 / 4)
 
@@ -75,16 +81,28 @@ On the 32 clips of [[sensecv-02062026-ifce-clip-manifest]] (one known
 deviation each): **26/32 correct directions, 3 misses, 3 wrong** — and 2 of
 the 3 wrong are flagged `baixa`. The yaw path is untested on this dataset
 because the gimbal suppresses rotation (max ≈ 11 °/s); lateral velocity was
-chosen automatically for all 32. No paradas are detected because recording
-stops less than 1 s after the person stops.
+chosen automatically for all 32. No **`parada` events** are detected because
+recording stops while the person is still mid-stride — the captures never record
+a settled standstill, so even the confirmed `detect_stop_onset` fallback fires on
+no clip (0/389). Such clips resolve to a `desvio` cut or, lacking one, a
+free-walk cut when they contain a sustained walking run.
 
 ## Surfaces
 
 - `app.py › suggest_deviation_cut(idx)` — turns the strongest `desvio` event
   into the suggested deviation cut (the `decisao` window by default,
-  `SENSECV_DEVIATION_CUT_WINDOW`). This is what the deviation export +
-  validation video feed on (`/api/inspect-deviation`, `export_set(mode='deviation')`).
-  See [[crop-suggestion]].
+  `SENSECV_DEVIATION_CUT_WINDOW`). When there is **no desvio**, it falls back to
+  `detect_stop_onset(idx)` and cuts the same label window around the stop start
+  T1 (`event_type:'parada'`, `stop_time`) — but only for a **confirmed** halt
+  (preceded by walking, not walked out of, `≥ IMU_STOP_CONFIRM_SEC`). With
+  **neither desvio nor confirmed parada** the clip is a **free walk** when it has
+  a **long continuous walking run** (`≥ IMU_FREE_WALK_MIN_SEC`, 3 s):
+  `detect_free_walk_span(idx)` returns the whole usable walking span
+  (`event_type:'livre'`, `side:'NONE'`). A clip with no sustained walk yields
+  `found:false`. This is what the deviation export +
+  validation video feed on (`/api/inspect-deviation`, `export_set(mode='deviation')`);
+  `export_deviation_set` filters to `side ∈ {LEFT, RIGHT}`, so `livre`/`parada`
+  stay out of the desvio validation video. See [[crop-suggestion]].
 - `GET /api/imu-events/<idx>?delta=` — see [[api-routes]].
 - Viewer "Eventos IMU" panel — Δ selector + Detectar button; each event shows
   type, direction, T1/T2, confidence, and three window buttons that apply the

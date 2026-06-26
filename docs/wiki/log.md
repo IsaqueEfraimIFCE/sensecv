@@ -5,6 +5,82 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-06-25] refine | tighten stop and free-walk criteria
+- **Stop cut** now requires a *confirmed* halt: the standstill must be preceded
+  by walking, **not walked out of**, and last `≥ SENSECV_IMU_STOP_CONFIRM_SEC`
+  (0.8 s). Dropped the old "≥ 0.3 s *or* reaches clip end" leniency, which let
+  brief mid-walk pauses through. `app.py › detect_stop_onset`.
+- **Free-walk cut** now requires a *long continuous walking run*: gait runs split
+  by gaps `< SENSECV_IMU_WALK_MERGE_GAP_SEC` (0.3 s) are merged and the longest
+  must last `≥ SENSECV_IMU_FREE_WALK_MIN_SEC` (3.0 s). `detect_free_walk_span`.
+- Finding: on the current 389-clip dataset the confirmed-stop rule yields **0
+  paradas** — captures end mid-stride, so a settled standstill is never recorded;
+  the old paradas were sub-second pauses. New distribution: **162 desvio, 0
+  parada, 97 livre, 130 none**.
+- pages touched: [[crop-suggestion]], [[imu-event-labeling]]
+
+## [2026-06-25] feature | free-walk fallback when no desvio and no parada
+- A clip with **neither a desvio nor a parada** previously made
+  `suggest_deviation_cut` return `found:false`. It is now treated as a **free
+  walk** (caminhada livre) — unobstructed forward walking, a legitimate third
+  dataset class alongside desvio and parada.
+- `app.py`: new `detect_free_walk_span(idx)` returns the **whole usable walking
+  span** `[first_walk, last_walk]` over the gait mask (`std_mag > IMU_WALK_STD`).
+  `suggest_deviation_cut`'s final branch now cuts that span and returns
+  `found:true` with `event_type:'livre'`, `side:'NONE'`, `direction:None`. Only a
+  clip that never really walks still yields `found:false`.
+- `export_set(mode='deviation')` now exports these cuts; `export_deviation_set`
+  still filters to `side ∈ {LEFT, RIGHT}`, so `livre`/`parada` stay out of the
+  desvio validation video. Auto-suggest now settles on `lateral` for any clip
+  with walking; the viewer toast tags `livre` cuts "caminhada livre".
+- pages touched: [[crop-suggestion]], [[imu-event-labeling]]
+
+## [2026-06-23] feature | deviation cut falls back to stop-onset when no desvio
+- Clips with **no lateral deviation** previously made `suggest_deviation_cut`
+  return `found:false` (auto-suggest then fell through to walking). Now they cut
+  around **the moment the person starts to stop**.
+- `app.py`: new `detect_stop_onset(idx)` — onset of the last standstill stretch
+  (`std_mag < IMU_STOP_STD`) that is preceded by walking and either lasts
+  `≥ SENSECV_IMU_STOP_ONSET_MIN_SEC` (new env, default 0.3 s) **or runs to the
+  end of the clip**. Looser than the strict `parada` event (`IMU_STOP_MIN_SEC`
+  1.0 s), which rarely fires because recordings end < 1 s after the halt. The
+  crossing into standstill is **T1** = the exact stop start.
+- `suggest_deviation_cut` now falls back to this when no `desvio` qualifies,
+  cutting the same PDF label window around T1 (`decisao` → `[T1-Δ, T1]`) and
+  returning `event_type:'parada'`, `stop_time` (=T1), `side:'NONE'`. The desvio
+  path gained `event_type:'desvio'`. `found:false` only when neither exists.
+- `index.html`: the manual "Desvio lateral" toast now shows `parada @ <stop>`
+  with the exact stop time for fallback cuts; `runAutoSuggest`/export/inspection
+  pick up the cut transparently via the unchanged return shape.
+- Verified: full scan of 389 clips → 166 stop-onset cuts, 61 still no-cut;
+  desvio clip 0 unchanged (LEFT 1.471→2.471); parada clip 41 stop_time 6.233 →
+  cut 5.233→6.233; `/api/suggest?mode=lateral` 200 with ssim; `/` renders 200.
+- Pages touched: [[crop-suggestion]], [[imu-event-labeling]], [[log]].
+
+## [2026-06-19] feature | new "Ativação" tab — Grad-CAM maps for the three heads
+- Added a seventh viewer tab showing **Grad-CAM activation heatmaps** for the
+  frame currently in the player: DroNet's **collision (classification) head**,
+  and the SenseCV `.keras` two-head model's **obstacle (head 1)** and **deviation
+  (head 2)** heads, side by side.
+- `app.py`: new `/api/activation/<idx>?time=&exact=` route + `activation_maps_frame()`
+  (decodes the frame once, shares the dronet/sensemodel 3-fps/exact frame logic
+  and a 24-entry cache). Grad-CAM helpers: `_dronet_activation()` (PyTorch hooks
+  on `conv9`, backprop the collision output), `_sensemodel_activation()` (TF
+  `GradientTape` over the last 4D-output conv layer, one CAM per head),
+  `_keras_last_conv_layer()`, and `_cam_to_data_uri()` (JET colormap blended over
+  the exact model input, returned as a PNG data URI). Each sub-map degrades
+  independently if torch/TF is missing.
+- `index.html`: `ativacao` tab/view (video-centric, player visible for scrubbing),
+  `requestActivation()`/`renderActivation()`/`resetActivationPanel()` driven from
+  inside `requestDronet()` but **gated to only fetch when the tab is active**
+  (the maps are expensive); `'ativacao'` added to `VIEWS`; `setView('ativacao')`
+  triggers an exact-frame request.
+- Verified: `/api/activation/0?time=1.0&exact=1` → 200, all three maps
+  `available:true` with valid PNG data URIs (dronet CLEAR 0.0002, obstacle
+  OBSTACLE 0.985, deviation LEFT 0.97 on frame 30).
+- Pages touched: [[viewer-frontend]], [[api-routes]], [[activation-maps]] (new),
+  [[index]].
+
 ## [2026-06-19] feature | split frame selection into its own large "Frames" tab
 - `index.html`: frame-selection UI (métrica select, threshold slider/number,
   summary, `#ssim-visualizer` strip, review links) moved out of `Anotar` into a

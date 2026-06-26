@@ -20,6 +20,7 @@ integer index into the current `CLIPS` list.
 | GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], quality, name, index, total, video_rotation}`; cached. `video_rotation` is the clip's display-rotation tag in degrees CW (cv2 `CAP_PROP_ORIENTATION_META`); the viewer undoes it so square/tagged clips aren't shown sideways |
 | GET | `/api/dronet/<int:idx>?time=&exact=` | JSON | Live DroNet steering/yaw/collision for a requested video time. See [[dronet-live-classification]] |
 | GET | `/api/sensemodel/<int:idx>?time=&exact=` | JSON | Live two-head SenseCV `.keras` obstacle/deviation prediction for a requested frame |
+| GET | `/api/activation/<int:idx>?time=&exact=` | JSON | Grad-CAM heatmaps (PNG data URIs) for DroNet collision + SenseCV obstacle/deviation heads on a requested frame. See [[activation-maps]] |
 | GET | `/api/sensemodel-info` | JSON | Active `.keras` model `{name, path, exists, is_default, default_name, loaded, error}` |
 | POST | `/api/upload-model` | JSON | Uploads a `.keras` file to `data/models/`, makes it the active model, and loads it now |
 | POST | `/api/reset-model` | JSON | Reverts the active model to the `SENSECV_MODEL_PATH` default |
@@ -71,6 +72,14 @@ any `.keras` file to replace the default at runtime, without restarting Flask.
 Any output-width contract still applies: the new model's heads are read by width
 (2 → obstacle, 3 → deviation), so an arbitrary `.keras` works best when it
 matches that two-head shape. `SENSECV_MODELS_DIR` overrides the upload folder.
+
+## `/api/activation`
+Grad-CAM **class-activation maps** for the live frame, one per classification
+head, as PNG `data:` URIs blended over the exact pixels each model received.
+Returns `{dronet, obstacle, deviation}`, each `{available, label, prob, image}`;
+sub-maps degrade independently if PyTorch or TensorFlow is absent. Shares the
+3-fps-bucket / exact-frame mapping and `(clip, mtime, frame)` caching of the
+other live routes. Full design in [[activation-maps]].
 
 ## `/api/inspect-deviation`
 Builds a single **deviation inspection video** — **no ML model is used**. Body

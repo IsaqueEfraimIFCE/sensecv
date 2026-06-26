@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SenseCV Viewer</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -131,9 +133,31 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .btn-row{display:flex;gap:6px;margin-top:8px}
 .btn{flex:1;padding:8px 10px;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s}
 .btn:hover:not(:disabled){filter:brightness(1.08)}
+.btn.danger{background:#3a1a1a;border:1px solid #6a2d2d;color:#ff6b6b}
+.btn.danger:hover:not(:disabled){background:#6a2d2d;color:#fff}
+.rev-excluded-item{display:flex;justify-content:space-between;align-items:center;
+  padding:4px 8px;border-radius:6px;background:#241a1a;border:1px solid #4a2d2d;
+  color:#ff8a8a;font-size:.82em;margin-top:4px;text-decoration:line-through}
+.rev-badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.8em;
+  font-weight:700;letter-spacing:.01em;vertical-align:middle;margin-right:8px}
+.rev-badge[data-kind="desvio-left"]{background:#15324a;border:1px solid #2d6aa0;color:#7cc4ff}
+.rev-badge[data-kind="desvio-right"]{background:#15324a;border:1px solid #2d6aa0;color:#7cc4ff}
+.rev-badge[data-kind="desvio"]{background:#15324a;border:1px solid #2d6aa0;color:#7cc4ff}
+.rev-badge[data-kind="parada"]{background:#3a2a12;border:1px solid #8a6420;color:#ffc46b}
+.rev-badge[data-kind="livre"]{background:#1a3a2a;border:1px solid #2d6a4f;color:#56d364}
+.rev-badge[data-kind="desconhecido"]{background:#2a2a2a;border:1px solid #555;color:#aaa}
 #btn-suggest-walk{background:#1a3a2a;border:1px solid #2d6a4f;color:#56d364}
 #btn-suggest-walk:hover:not(:disabled){background:#2d6a4f}
 #btn-suggest-walk:disabled{opacity:.6;cursor:default}
+.cut-type{margin-top:8px;padding:6px 10px;border-radius:6px;font-size:13px;
+  font-weight:600;display:flex;gap:8px;align-items:center;
+  background:#1a2330;border:1px solid #2a3a52}
+.cut-type .ct-label{opacity:.7;font-weight:500}
+.cut-type[data-type="desvio"]{background:#1a2a3a;border-color:#2d5a8f;color:#79c0ff}
+.cut-type[data-type="parada"]{background:#3a2a1a;border-color:#8f6a2d;color:#ffca79}
+.cut-type[data-type="livre"]{background:#1a3a2a;border-color:#2d6a4f;color:#56d364}
+.cut-type[data-type="caminhada"]{background:#1a3a2a;border-color:#2d6a4f;color:#56d364}
+.cut-type[data-type="walking"]{background:#1a3a2a;border-color:#2d6a4f;color:#56d364}
 #export-btn{background:#1d4ed8;color:#fff}
 #export-btn:hover:not(:disabled){background:#2563eb}
 #export-btn:disabled{opacity:.5;cursor:default}
@@ -252,23 +276,29 @@ body.clip-horizontal .video-wrapper{height:55vh}
 body.view-anotar     [data-view="anotar"],
 body.view-frames     [data-view="frames"],
 body.view-inferencia [data-view="inferencia"],
+body.view-ativacao   [data-view="ativacao"],
 body.view-lote       [data-view="lote"],
 body.view-desvios    [data-view="desvios"],
+body.view-revisao    [data-view="revisao"],
 body.view-datasets   [data-view="datasets"]{display:block}
 /* The video+charts player only matters on the video-centric views. */
 #player-left{display:none;flex-direction:column}
 body.view-anotar #player-left,
+body.view-ativacao #player-left,
 body.view-inferencia #player-left{display:flex}
 body.view-anotar .right,
+body.view-ativacao .right,
 body.view-inferencia .right{display:flex}
 body.view-lote .right,
 body.view-frames .right,
 body.view-desvios .right,
+body.view-revisao .right,
 body.view-datasets .right{display:none}
 /* Non-video views give their panels the full width. */
 body.view-lote .main,
 body.view-frames .main,
 body.view-desvios .main,
+body.view-revisao .main,
 body.view-datasets .main{grid-template-columns:1fr}
 /* The left panel scrolls per-section elsewhere; the frames view fills it. */
 body.view-frames .left{border-right:none}
@@ -286,7 +316,19 @@ body.view-frames .ssim-empty{font-size:var(--fs-md);padding:24px}
 body.view-frames .ssim-review-links{margin-top:16px}
 body.view-frames .ssim-review-links a{font-size:var(--fs-sm);padding:7px 12px}
 /* The quick-actions strip mirrors the crop controls — Anotar only. */
-body.view-inferencia #quick-actions{display:none}
+body.view-inferencia #quick-actions,
+body.view-ativacao #quick-actions{display:none}
+
+/* ── Activation (Grad-CAM) maps ── */
+.actmap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:6px}
+@media (max-width:1100px){.actmap-grid{grid-template-columns:1fr}}
+.actmap-card{background:var(--panel-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;display:flex;flex-direction:column;gap:8px}
+.actmap-card h4{margin:0;font-size:var(--fs-sm);color:var(--text)}
+.actmap-card .actmap-sub{font-size:var(--fs-xs);color:var(--muted)}
+.actmap-img{width:100%;aspect-ratio:1/1;object-fit:contain;background:#000;border-radius:var(--radius-sm);border:1px solid var(--border)}
+.actmap-img.placeholder{display:flex;align-items:center;justify-content:center}
+.actmap-pred{font-size:var(--fs-md);font-variant-numeric:tabular-nums}
+.actmap-pred .warn{color:var(--red)}
 
 /* ── Modern polish ── */
 header{box-shadow:var(--shadow);position:relative;z-index:5;padding:10px 16px}
@@ -327,8 +369,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <button class="tab" data-view="anotar">Anotar</button>
     <button class="tab" data-view="frames">Frames</button>
     <button class="tab" data-view="inferencia">Inferência</button>
+    <button class="tab" data-view="ativacao">Ativação</button>
     <button class="tab" data-view="lote">Lote + Manifesto</button>
     <button class="tab" data-view="desvios">Desvios + Validação</button>
+    <button class="tab" data-view="revisao">Revisão</button>
     <button class="tab" data-view="datasets">Datasets</button>
   </nav>
 </header>
@@ -346,6 +390,8 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     <div class="time-display">
       <span style="display:flex;align-items:center;gap:8px">
         <button id="btn-play" class="play-btn" title="Reproduzir/Pausar (Espaço)">▶</button>
+        <button id="btn-frame-prev" class="play-btn" title="Frame anterior (←)">◀ f</button>
+        <button id="btn-frame-next" class="play-btn" title="Próximo frame (→)">f ▶</button>
         Posição: <span id="t-cur">0.000</span>s / <span id="t-dur">–</span>s
       </span>
       <span>Frame <span id="t-frame">0</span></span>
@@ -370,7 +416,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <div class="vals-grid">
         <div class="val-box"><div class="val-label">|Acel|</div><div class="val-num" id="v-amag" style="color:var(--gold)">–</div><div class="val-unit">m/s²</div></div>
         <div class="val-box"><div class="val-label">Rot X</div><div class="val-num" id="v-rx" style="color:var(--red)">–</div><div class="val-unit">rad/s</div></div>
-        <div class="val-box"><div class="val-label">Velocidade</div><div class="val-num" id="v-spd" style="color:var(--purple)">–</div><div class="val-unit">m/s</div></div>
+        <div class="val-box"><div class="val-label">V. frente (passos)</div><div class="val-num" id="v-spd" style="color:var(--purple)">–</div><div class="val-unit">m/s</div></div>
         <div class="val-box"><div class="val-label">Acel X</div><div class="val-num" id="v-ax" style="color:var(--red)">–</div><div class="val-unit">m/s²</div></div>
         <div class="val-box"><div class="val-label">Acel Y</div><div class="val-num" id="v-ay" style="color:var(--green)">–</div><div class="val-unit">m/s²</div></div>
         <div class="val-box"><div class="val-label">Acel Z</div><div class="val-num" id="v-az" style="color:var(--blue)">–</div><div class="val-unit">m/s²</div></div>
@@ -408,6 +454,37 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       </div>
     </div>
     </div><!-- end view: inferencia -->
+
+    <!-- ░░ View: Ativação (Grad-CAM) ░░ -->
+    <div class="view" data-view="ativacao">
+    <div class="section">
+      <h3>Mapas de ativação (Grad-CAM)</h3>
+      <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
+        Onde cada modelo "olha" no frame atual. SenseCV: <code id="am-model-name">best_model.keras</code>
+      </p>
+      <div class="actmap-grid">
+        <div class="actmap-card">
+          <h4>DroNet — colisão</h4>
+          <div class="actmap-sub">cabeça de classificação (último conv)</div>
+          <img class="actmap-img placeholder" id="am-dronet-img" alt="">
+          <div class="actmap-pred" id="am-dronet-pred">-</div>
+        </div>
+        <div class="actmap-card">
+          <h4>SenseCV — obstáculo (cabeça 1)</h4>
+          <div class="actmap-sub">NONE / OBSTACLE</div>
+          <img class="actmap-img placeholder" id="am-obstacle-img" alt="">
+          <div class="actmap-pred" id="am-obstacle-pred">-</div>
+        </div>
+        <div class="actmap-card">
+          <h4>SenseCV — desvio (cabeça 2)</h4>
+          <div class="actmap-sub">LEFT / RIGHT / NONE</div>
+          <img class="actmap-img placeholder" id="am-deviation-img" alt="">
+          <div class="actmap-pred" id="am-deviation-pred">-</div>
+        </div>
+      </div>
+      <div class="dronet-status" id="am-status">Aguardando frame...</div>
+    </div>
+    </div><!-- end view: ativacao -->
 
     <!-- ░░ View: Anotar ░░ -->
     <div class="view" data-view="anotar">
@@ -469,6 +546,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <button class="btn" id="btn-suggest-walk" data-mode="walking">⬦ Caminhada</button>
         <button class="btn" id="btn-suggest-lateral" data-mode="lateral">⬦ Desvio lateral</button>
       </div>
+      <div class="cut-type hidden" id="cut-type-disp"></div>
       <div class="form-row">
         <label>Eventos IMU</label>
         <div class="imu-control">
@@ -601,6 +679,66 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     </div>
     </div><!-- end view: desvios -->
 
+    <!-- ░░ View: Revisão (cull bad clips) ░░ -->
+    <div class="view" data-view="revisao">
+    <div class="section">
+      <h3>Revisão dos cortes</h3>
+      <p style="margin:.25em 0 .5em;color:#9aa0a6;font-size:.85em">
+        Reproduz o <code>review_all_frames.mp4</code> de cada grupo (todos os
+        cortes concatenados). Pause em qualquer <strong>frame errado</strong>: o
+        clipe correspondente é identificado abaixo. Clique em
+        <strong>Excluir clipe</strong> para apagar a pasta inteira daquele clipe
+        em <code>data/derived/manifest_exports/&lt;grupo&gt;/deviation/</code>.
+        Depois, <strong>Reconstruir vídeo</strong> regenera a revisão só com os
+        clipes que sobraram.
+      </p>
+      <div class="upload-row" style="flex-wrap:wrap;align-items:center;gap:8px">
+        <select id="rev-group" style="min-width:18em"></select>
+        <button class="btn" id="rev-reload">Atualizar grupos</button>
+        <button class="btn" id="rev-rebuild">Reconstruir vídeo</button>
+      </div>
+      <div class="dronet-status" id="rev-status"></div>
+      <video id="rev-video" controls preload="metadata"
+             style="width:100%;max-height:60vh;background:#000;border-radius:10px;margin-top:8px;display:none"></video>
+      <div id="rev-controls" class="upload-row hidden" style="align-items:center;gap:8px;margin-top:8px">
+        <button class="btn" id="rev-prev">◀ frame</button>
+        <button class="btn" id="rev-next">frame ▶</button>
+        <label style="color:#9aa0a6;font-size:.85em;display:flex;align-items:center;gap:4px">
+          Velocidade
+          <select id="rev-speed" style="width:auto">
+            <option value="0.25">0,25×</option>
+            <option value="0.5">0,5×</option>
+            <option value="1" selected>1×</option>
+            <option value="1.5">1,5×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+            <option value="8">8×</option>
+          </select>
+        </label>
+        <span id="rev-frameinfo" style="color:#9aa0a6;font-size:.85em"></span>
+      </div>
+      <div id="rev-current" class="hidden"
+           style="margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--panel-2)">
+        <div id="rev-current-name" style="font-weight:600"></div>
+        <div id="rev-current-meta" style="color:#9aa0a6;font-size:.85em;margin:.25em 0 .5em"></div>
+        <div class="upload-row" style="align-items:center;gap:8px;margin-bottom:8px">
+          <label style="color:#9aa0a6;font-size:.85em;display:flex;align-items:center;gap:4px">
+            Rótulo
+            <select id="rev-label" style="width:auto">
+              <option value="desvio-left">Desvio ◀ esquerda</option>
+              <option value="desvio-right">Desvio ▶ direita</option>
+              <option value="parada">Parada</option>
+              <option value="livre">Caminhada livre</option>
+            </select>
+          </label>
+          <span id="rev-label-note" style="color:#9aa0a6;font-size:.8em"></span>
+        </div>
+        <button class="btn danger" id="rev-exclude">Excluir clipe atual</button>
+      </div>
+      <div id="rev-excluded" style="margin-top:10px"></div>
+    </div>
+    </div><!-- end view: revisao -->
+
     <!-- ░░ View: Datasets + histórico ░░ -->
     <div class="view" data-view="datasets">
     <!-- Dataset upload -->
@@ -649,10 +787,10 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
     </div>
     <div class="chart-block" id="block-velocity">
       <div class="chart-header">
-        <div><span class="chart-title" style="color:var(--purple)">Velocidade estimada</span><span class="chart-subtitle">m/s · corrigida pelo giroscópio</span></div>
+        <div><span class="chart-title" style="color:var(--purple)">Velocidade estimada</span><span class="chart-subtitle">m/s · frente por passos · lateral integrada</span></div>
         <div class="series-toggles" id="tog-velocity">
-          <button class="stog on" data-s="speed">|V|</button><button class="stog on" data-s="vx">Vx</button>
-          <button class="stog on" data-s="vy">Vy</button><button class="stog on" data-s="vz">Vz</button>
+          <button class="stog on" data-s="forward">Frente (passos)</button><button class="stog on" data-s="lateral">Lateral</button>
+          <button class="stog on" data-s="speed">|V|</button><button class="stog on" data-s="vz">Vz</button>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="chart-velocity"></canvas></div>
@@ -729,6 +867,10 @@ let sensemodelInFlight = false;
 let sensemodelPendingExact = null;
 let sensemodelLastKey = null;
 let sensemodelSeq = 0;
+let activationInFlight = false;
+let activationPendingExact = null;
+let activationLastKey = null;
+let activationSeq = 0;
 
 // ═══ Video orientation (measured, per-video) ════
 // Desired display orientation for the active clip: supermarket footage is shown
@@ -850,6 +992,7 @@ async function loadClip(idx) {
   cropStart = cropEnd = null;
   document.getElementById('crop-start-disp').textContent = '–';
   document.getElementById('crop-end-disp').textContent   = '–';
+  hideCutType();
   updateSsimSummary(null);
   resetImuEvents();
   showVerticalWarning(false);
@@ -919,6 +1062,7 @@ function showNoClipsState(){
   cropStart = cropEnd = null;
   document.getElementById('crop-start-disp').textContent = '–';
   document.getElementById('crop-end-disp').textContent = '–';
+  hideCutType();
   updateSsimSummary(null);
   resetImuEvents();
   resetDronetPanel();
@@ -1019,6 +1163,8 @@ const cropPlugin = {
   }
 };
 Chart.register(cursorPlugin, cropPlugin);
+// Zoom/pan plugin (CDN). Registers itself as window.ChartZoom in the UMD build.
+try { if (window.ChartZoom) Chart.register(window.ChartZoom); } catch(e) {}
 
 function ds(label,data,color){
   return{label,data,borderColor:color,backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0.1};
@@ -1026,6 +1172,13 @@ function ds(label,data,color){
 function inputDs(data){
   return{label:'Input',data,borderColor:'#ff9f1c',backgroundColor:'rgba(255,159,28,.18)',
     borderWidth:2,pointRadius:0,tension:0,stepped:true,spanGaps:false};
+}
+// Adaptive precision so zooming down to a ~1 ms window still shows distinct
+// time labels (e.g. 1.2345s). `this` is the scale; pick decimals from the span.
+function timeTick(value){
+  const span=(this.max-this.min);
+  const dec = span<0.005?6 : span<0.05?5 : span<0.5?4 : span<5?3 : span<50?2:1;
+  return value.toFixed(dec)+'s';
 }
 function makeChart(id,datasets){
   if (charts[id]) { charts[id].destroy(); }
@@ -1036,13 +1189,44 @@ function makeChart(id,datasets){
       plugins:{legend:{display:false},tooltip:{
         backgroundColor:'#161b22',borderColor:'#30363d',borderWidth:1,
         titleColor:'#8b949e',bodyColor:'#c9d1d9',
-        callbacks:{title:i=>`t=${(+i[0].parsed.x).toFixed(3)}s`,label:i=>`${i.dataset.label}: ${i.parsed.y.toFixed(4)}`}
+        callbacks:{title:i=>`t=${(+i[0].parsed.x).toFixed(4)}s`,label:i=>`${i.dataset.label}: ${i.parsed.y.toFixed(4)}`}
+      },
+      // Wheel = zoom X; drag a box = zoom that span; Ctrl+drag = pan.
+      // minRange 0.001 s lets you zoom in to a 1 ms-wide window.
+      zoom:{
+        pan:{enabled:true,mode:'x',modifierKey:'ctrl',
+             onPanComplete:({chart})=>syncChartZoom(chart)},
+        zoom:{wheel:{enabled:true},pinch:{enabled:true},mode:'x',
+              drag:{enabled:true,backgroundColor:'rgba(88,166,255,.18)',
+                    borderColor:'#58a6ff',borderWidth:1},
+              onZoomComplete:({chart})=>syncChartZoom(chart)},
+        limits:{x:{minRange:0.001}}
       }},
       scales:{
-        x:{type:'linear',grid:{color:'#1e2430'},ticks:{color:'#555',maxTicksLimit:8,callback:v=>v.toFixed(1)+'s'}},
+        x:{type:'linear',grid:{color:'#1e2430'},ticks:{color:'#555',maxTicksLimit:8,callback:timeTick}},
         y:{grid:{color:'#1e2430'},ticks:{color:'#555',maxTicksLimit:6}}
       }}
   });
+  // Double-click resets the zoom on this chart (and we keep all charts in sync
+  // below via syncChartZoom).
+  const canvas=document.getElementById(id);
+  canvas.ondblclick=()=>{ try{ charts[id].resetZoom(); syncChartZoom(charts[id]); }catch(e){} };
+  canvas.title='Scroll = zoom · arraste = zoom na seleção · Ctrl+arraste = mover · duplo-clique = resetar';
+  return charts[id];
+}
+
+// Keep the time axis of every chart in lockstep when one is zoomed/panned, so
+// accel/gyro/velocity always show the same window.
+let _zoomSyncing=false;
+function syncChartZoom(src){
+  if(_zoomSyncing) return;
+  _zoomSyncing=true;
+  const {min,max}=src.scales.x;
+  Object.values(charts).forEach(c=>{
+    if(c===src) return;
+    c.zoomScale && c.zoomScale('x',{min,max},'none');
+  });
+  _zoomSyncing=false;
 }
 
 function zip(arr){ return DATA.times.map((t,i)=>({x:t,y:arr[i]})); }
@@ -1062,8 +1246,8 @@ function rebuildCharts(){
     ds('X',zip(R.map(v=>v[0])),'#f85149'),ds('Y',zip(R.map(v=>v[1])),'#56d364'),ds('Z',zip(R.map(v=>v[2])),'#79c0ff')
   ]);
   makeChart('chart-velocity',[
-    ds('|V|',zip(V.map(v=>v.speed)),'#bc8cff'),ds('Vx',zip(V.map(v=>v.vx)),'#f85149'),
-    ds('Vy', zip(V.map(v=>v.vy)),   '#56d364'),ds('Vz',zip(V.map(v=>v.vz)),'#79c0ff')
+    ds('Frente (passos)',zip(V.map(v=>v.forward)),'#56d364'),ds('Lateral',zip(V.map(v=>v.lateral)),'#f85149'),
+    ds('|V|',zip(V.map(v=>v.speed)),'#bc8cff'),ds('Vz',zip(V.map(v=>v.vz)),'#79c0ff')
   ]);
   ['accel','rotation','velocity'].forEach(ch => {
     document.getElementById('tog-'+ch).querySelectorAll('.stog').forEach((btn,i) => {
@@ -1119,6 +1303,7 @@ function resetSensemodelPanel(){
   const status = document.getElementById('sm-status');
   status.className = 'dronet-status';
   status.textContent = 'Aguardando frame...';
+  resetActivationPanel();
 }
 
 function renderSensemodel(d){
@@ -1179,8 +1364,88 @@ function renderDronet(d){
   status.textContent = `${d.exact ? 'frame pausado' : '3 fps'}: f${d.frame} t=${d.time_s.toFixed(3)}s ${d.collision_label}`;
 }
 
+function activationActive(){ return document.body.classList.contains('view-ativacao'); }
+
+function resetActivationPanel(){
+  activationInFlight = false;
+  activationPendingExact = null;
+  activationLastKey = null;
+  activationSeq++;
+  ['am-dronet','am-obstacle','am-deviation'].forEach(id=>{
+    const img = document.getElementById(id+'-img');
+    img.removeAttribute('src');
+    img.classList.add('placeholder');
+    document.getElementById(id+'-pred').textContent = '-';
+  });
+  const status = document.getElementById('am-status');
+  status.className = 'dronet-status';
+  status.textContent = 'Aguardando frame...';
+}
+
+function renderActivationMap(prefix, m, warnLabels){
+  const img = document.getElementById(prefix+'-img');
+  const pred = document.getElementById(prefix+'-pred');
+  if(!m || !m.available){
+    img.removeAttribute('src');
+    img.classList.add('placeholder');
+    pred.innerHTML = `<span class="warn">${(m && m.error) || 'indisponível'}</span>`;
+    return;
+  }
+  img.src = m.image;
+  img.classList.remove('placeholder');
+  const warn = warnLabels.includes(m.label);
+  pred.innerHTML = `<strong${warn ? ' class="warn"' : ''}>${m.label}</strong> ${m.prob.toFixed(3)}`;
+}
+
+function renderActivation(d){
+  const status = document.getElementById('am-status');
+  if(!d.available){
+    status.className = 'dronet-status err';
+    status.textContent = d.error || 'Mapas indisponíveis';
+    return;
+  }
+  if(d.model) document.getElementById('am-model-name').textContent = d.model;
+  renderActivationMap('am-dronet', d.dronet, ['COLLISION']);
+  renderActivationMap('am-obstacle', d.obstacle, ['OBSTACLE']);
+  renderActivationMap('am-deviation', d.deviation, ['LEFT','RIGHT']);
+  status.className = 'dronet-status ok';
+  status.textContent = `${d.exact ? 'frame pausado' : '3 fps'}: f${d.frame} t=${d.time_s.toFixed(3)}s`;
+}
+
+async function requestActivation(exact=false){
+  if(!DATA || !activationActive()) return;
+  const t = video.currentTime || 0;
+  const key = exact ? `exact:${Math.round(t * (DATA.fps || 30))}` : `bucket:${Math.floor(t * 3)}`;
+  if(key === activationLastKey) return;
+  if(activationInFlight){
+    activationPendingExact = exact;
+    return;
+  }
+  activationInFlight = true;
+  activationLastKey = key;
+  const seq = activationSeq;
+  const status = document.getElementById('am-status');
+  status.className = 'dronet-status';
+  status.textContent = 'Calculando mapas...';
+  try{
+    const r = await fetch(`/api/activation/${currentIdx}?time=${encodeURIComponent(t)}&exact=${exact ? 1 : 0}`);
+    const d = await r.json();
+    if(seq === activationSeq) renderActivation(d);
+  }catch(e){
+    if(seq === activationSeq) renderActivation({available:false,error:'Erro ao consultar mapas de ativação'});
+  }finally{
+    activationInFlight = false;
+    if(activationPendingExact !== null && seq === activationSeq){
+      const nextExact = activationPendingExact;
+      activationPendingExact = null;
+      requestActivation(nextExact);
+    }
+  }
+}
+
 async function requestDronet(exact=false){
   requestSensemodel(exact);
+  requestActivation(exact);
   if(!DATA) return;
   const t = video.currentTime || 0;
   const key = exact ? `exact:${Math.round(t * (DATA.fps || 30))}` : `bucket:${Math.floor(t * 3)}`;
@@ -1215,6 +1480,18 @@ video.addEventListener('seeking',onTime);
 const btnPlay=document.getElementById('btn-play');
 btnPlay.addEventListener('click',()=>{ video.paused?video.play():video.pause(); });
 
+// Single-frame stepping for the main video, using the clip's real frame
+// timestamps (DATA.times) so each press moves exactly one frame.
+function videoStepFrame(dir){
+  if(!DATA || !DATA.times || !DATA.times.length) return;
+  video.pause();
+  const idx=nearestIdx(video.currentTime);
+  const next=Math.min(DATA.times.length-1, Math.max(0, idx+dir));
+  video.currentTime=DATA.times[next];
+}
+document.getElementById('btn-frame-prev').addEventListener('click',()=>videoStepFrame(-1));
+document.getElementById('btn-frame-next').addEventListener('click',()=>videoStepFrame(1));
+
 let rafId=null;
 function syncLoop(){
   if(video.paused||video.ended){ rafId=null; return; }
@@ -1241,7 +1518,7 @@ function onTime(){
     document.getElementById('v-amag').textContent=Math.sqrt(a[0]**2+a[1]**2+a[2]**2).toFixed(3);
   }
   if(DATA.rotation[idx]) document.getElementById('v-rx').textContent=DATA.rotation[idx][0].toFixed(4);
-  if(DATA.velocity[idx]) document.getElementById('v-spd').textContent=DATA.velocity[idx].speed.toFixed(4);
+  if(DATA.velocity[idx]) document.getElementById('v-spd').textContent=DATA.velocity[idx].forward.toFixed(3);
   drawTimeline();
   if(video.paused) requestDronet(true);
 }
@@ -1347,6 +1624,34 @@ const SUGGEST_TAGS={
   walking:'caminhada',
   lateral:'desvio lateral',
 };
+
+// Resolve a suggested cut to a (data-type, human label) pair. The IMU
+// deviation cut carries event_type: desvio | parada | livre; the walking
+// suggestion has none.
+function cutTypeInfo(d, mode){
+  if(d.event_type==='desvio'){
+    const dir = d.side==='LEFT' ? 'esquerda' : d.side==='RIGHT' ? 'direita' : '';
+    return {type:'desvio', label:'Desvio lateral' + (dir ? ` (${dir})` : '')};
+  }
+  if(d.event_type==='parada')
+    return {type:'parada', label:`Parada @ ${fmtTime(d.stop_time)}`};
+  if(d.event_type==='livre')
+    return {type:'livre', label:'Caminhada livre'};
+  return {type:'caminhada', label:'Caminhada'};
+}
+function cutTypeLabel(d, mode){ return cutTypeInfo(d, mode).label; }
+function showCutType(d, mode){
+  const el = document.getElementById('cut-type-disp');
+  if(!el) return;
+  const info = cutTypeInfo(d, mode);
+  el.dataset.type = info.type;
+  el.innerHTML = `<span class="ct-label">Tipo de corte:</span> ${info.label}`;
+  el.classList.remove('hidden');
+}
+function hideCutType(){
+  const el = document.getElementById('cut-type-disp');
+  if(el){ el.classList.add('hidden'); el.removeAttribute('data-type'); el.textContent=''; }
+}
 
 const IMU_EVENT_LABELS = {desvio:'Desvio', reducao:'Redução', parada:'Parada'};
 const IMU_WINDOW_LABELS = {decisao:'Decisão', acao:'Ação', expandido:'Expandido'};
@@ -1604,10 +1909,14 @@ async function runSuggest(mode, opts={}){
       updateSsimSummary(d.ssim);
       await loadSsimVisualizer();
       updateExportBtn(); drawTimeline(); Object.values(charts).forEach(c=>c.update('none'));
+      showCutType(d, mode);
       if(auto) return true;
-      if(!auto) showToast(`Sugestão (${SUGGEST_TAGS[mode]}): ${fmtTime(d.start)} → ${fmtTime(d.end)}`,'ok');
-    } else if(!auto){
-      showToast(d.message||'Nenhuma sugestão encontrada','err');
+      if(!auto){
+        showToast(`Sugestão (${cutTypeLabel(d, mode)}): ${fmtTime(d.start)} → ${fmtTime(d.end)}`,'ok');
+      }
+    } else {
+      hideCutType();
+      if(!auto) showToast(d.message||'Nenhuma sugestão encontrada','err');
     }
   } catch(e){ if(!auto) showToast('Erro: '+e.message,'err'); }
   finally{ if(!auto){ btn.textContent=SUGGEST_LABELS[mode]; btn.disabled=false; } }
@@ -2076,16 +2385,215 @@ function showToast(msg,type='ok'){
 document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT') return;
   if(e.code==='Space'){e.preventDefault(); video.paused?video.play():video.pause();}
-  if(e.code==='ArrowLeft') {e.preventDefault(); video.currentTime=Math.max(0,video.currentTime-(e.shiftKey?5:.5));}
-  if(e.code==='ArrowRight'){e.preventDefault(); video.currentTime=Math.min(DATA?.duration??Infinity,video.currentTime+(e.shiftKey?5:.5));}
+  // Plain ←/→ step exactly one frame (DATA.times); Shift jumps 1 s.
+  if(e.code==='ArrowLeft') {e.preventDefault(); if(e.shiftKey){video.pause();video.currentTime=Math.max(0,video.currentTime-1);} else videoStepFrame(-1);}
+  if(e.code==='ArrowRight'){e.preventDefault(); if(e.shiftKey){video.pause();video.currentTime=Math.min(DATA?.duration??Infinity,video.currentTime+1);} else videoStepFrame(1);}
   if(e.key==='s') document.getElementById('btn-set-start').click();
   if(e.key==='e') document.getElementById('btn-set-end').click();
   if(e.key===']') document.getElementById('btn-next').click();
   if(e.key==='[') document.getElementById('btn-prev').click();
 });
 
+// ═══ Revisão: cull bad clips ════════════════════
+const revEl = {
+  group:    document.getElementById('rev-group'),
+  reload:   document.getElementById('rev-reload'),
+  rebuild:  document.getElementById('rev-rebuild'),
+  status:   document.getElementById('rev-status'),
+  video:    document.getElementById('rev-video'),
+  controls: document.getElementById('rev-controls'),
+  prev:     document.getElementById('rev-prev'),
+  next:     document.getElementById('rev-next'),
+  speed:    document.getElementById('rev-speed'),
+  frameinfo:document.getElementById('rev-frameinfo'),
+  current:  document.getElementById('rev-current'),
+  curName:  document.getElementById('rev-current-name'),
+  curMeta:  document.getElementById('rev-current-meta'),
+  label:    document.getElementById('rev-label'),
+  labelNote:document.getElementById('rev-label-note'),
+  exclude:  document.getElementById('rev-exclude'),
+  excluded: document.getElementById('rev-excluded'),
+};
+let revIndex = null;       // {fps,total_frames,video_url,clips:[...]}
+let revCurrentClip = null;
+
+function revSetStatus(msg){ revEl.status.textContent = msg || ''; }
+
+async function revLoadGroups(){
+  revSetStatus('Carregando grupos…');
+  let data;
+  try { data = await (await fetch('/api/revisao/groups?mode=deviation')).json(); }
+  catch(e){ revSetStatus('Falha ao carregar grupos: ' + e); return; }
+  const groups = (data.groups || []).filter(g => g.has_review);
+  const prev = revEl.group.value;
+  revEl.group.innerHTML = groups.length
+    ? groups.map(g => `<option value="${g.group}">${g.group} (${g.clips} clipes)</option>`).join('')
+    : '<option value="">— nenhum grupo com vídeo de revisão ainda —</option>';
+  if(!groups.length){ revSetStatus('Nenhum grupo possui review_all_frames.mp4 ainda. Os cortes ainda estão rodando?'); revEl.video.style.display='none'; revEl.controls.classList.add('hidden'); revEl.current.classList.add('hidden'); return; }
+  if(prev && groups.some(g => g.group === prev)) revEl.group.value = prev;
+  revSetStatus('');
+  revLoadIndex(revEl.group.value);
+}
+
+async function revLoadIndex(group){
+  if(!group) return;
+  revSetStatus('Carregando revisão de ' + group + '…');
+  revIndex = null; revCurrentClip = null;
+  revEl.current.classList.add('hidden');
+  let data;
+  try { data = await (await fetch('/api/revisao/index?mode=deviation&group=' + encodeURIComponent(group))).json(); }
+  catch(e){ revSetStatus('Falha: ' + e); return; }
+  if(data.status !== 'ok'){ revSetStatus(data.message || 'sem vídeo'); revEl.video.style.display='none'; return; }
+  revIndex = data;
+  revEl.video.src = data.video_url + '?t=' + Date.now();
+  revApplySpeed();
+  revEl.video.style.display = 'block';
+  revEl.controls.classList.remove('hidden');
+  const activeClips = data.clips.filter(c => !c.excluded);
+  const by = {};
+  activeClips.forEach(c => { const k = c.label || '—'; by[k] = (by[k]||0)+1; });
+  const dist = Object.keys(by).sort().map(k => `${k}: ${by[k]}`).join(' · ');
+  revSetStatus(`${activeClips.length} clipe(s) ativos · ${data.total_frames} frames @ ${data.fps} fps` +
+               (dist ? ' — ' + dist : ''));
+  revRenderExcluded();
+  revUpdateCurrent();
+}
+
+function revFrameAtTime(){
+  if(!revIndex) return 0;
+  return Math.min(revIndex.total_frames - 1,
+                  Math.max(0, Math.round(revEl.video.currentTime * revIndex.fps)));
+}
+
+function revClipForFrame(frame){
+  if(!revIndex) return null;
+  return revIndex.clips.find(c => frame >= c.start_frame && frame < c.end_frame) || null;
+}
+
+function revUpdateCurrent(){
+  if(!revIndex) return;
+  const frame = revFrameAtTime();
+  const clip = revClipForFrame(frame);
+  revEl.frameinfo.textContent = `frame ${frame} / ${revIndex.total_frames}`;
+  revCurrentClip = clip;
+  if(!clip){ revEl.current.classList.add('hidden'); return; }
+  revEl.current.classList.remove('hidden');
+  const badge = `<span class="rev-badge" data-kind="${clip.label_kind || 'desconhecido'}">${clip.label || '—'}</span>`;
+  revEl.curName.innerHTML = badge +
+    '<span>' + clip.folder + (clip.excluded ? '  — JÁ EXCLUÍDO' : '') + '</span>';
+  revEl.curMeta.textContent =
+    `${clip.source_display} · corte ${clip.cut_start}–${clip.cut_end}s (${clip.duration}s) · ` +
+    `frames ${clip.start_frame}–${clip.end_frame - 1}`;
+  if(clip.label_kind && [...revEl.label.options].some(o => o.value === clip.label_kind))
+    revEl.label.value = clip.label_kind;
+  revEl.label.disabled = !!clip.excluded;
+  revEl.labelNote.textContent = clip.label_overridden
+    ? `manual (detectado: ${clip.detected_label || '—'})` : 'detectado automaticamente';
+  revEl.exclude.disabled = !!clip.excluded;
+  revEl.exclude.textContent = clip.excluded ? 'Clipe já excluído' : 'Excluir clipe atual';
+}
+
+function revRenderExcluded(){
+  if(!revIndex){ revEl.excluded.innerHTML=''; return; }
+  const ex = revIndex.clips.filter(c => c.excluded);
+  revEl.excluded.innerHTML = ex.length
+    ? '<div style="color:#9aa0a6;font-size:.82em;margin-bottom:2px">Excluídos (some na próxima reconstrução):</div>' +
+      ex.map(c => `<div class="rev-excluded-item"><span>${c.label || ''} · ${c.folder}</span></div>`).join('')
+    : '';
+}
+
+function revStep(dir){
+  if(!revIndex) return;
+  revEl.video.pause();
+  revEl.video.currentTime = Math.max(0, revEl.video.currentTime + dir / revIndex.fps);
+}
+
+function revApplySpeed(){
+  const r = parseFloat(revEl.speed.value) || 1;
+  try { revEl.video.playbackRate = r; } catch(e) {}
+}
+
+async function revExcludeCurrent(){
+  if(!revCurrentClip || revCurrentClip.excluded) return;
+  const clip = revCurrentClip;
+  if(!confirm(`Excluir o clipe inteiro "${clip.folder}"?\nA pasta será apagada de manifest_exports.`)) return;
+  revEl.exclude.disabled = true;
+  revSetStatus('Excluindo ' + clip.folder + '…');
+  let data;
+  try {
+    data = await (await fetch('/api/revisao/exclude', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group: revIndex.group || revEl.group.value, mode:'deviation', folder: clip.folder})
+    })).json();
+  } catch(e){ revSetStatus('Falha: ' + e); revEl.exclude.disabled=false; return; }
+  if(data.status !== 'ok'){ revSetStatus(data.message || 'erro'); revEl.exclude.disabled=false; return; }
+  clip.excluded = true;
+  revSetStatus(`Excluído ${clip.folder}. Restam ${data.remaining} clipe(s). Reconstrua o vídeo quando terminar.`);
+  revRenderExcluded();
+  revUpdateCurrent();
+}
+
+async function revChangeLabel(){
+  if(!revCurrentClip || revCurrentClip.excluded) return;
+  const clip = revCurrentClip;
+  const kind = revEl.label.value;
+  if(kind === clip.label_kind) return;
+  revEl.label.disabled = true;
+  revSetStatus(`Alterando rótulo de ${clip.folder}…`);
+  let data;
+  try {
+    data = await (await fetch('/api/revisao/label', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group: revIndex.group || revEl.group.value, mode:'deviation',
+                            folder: clip.folder, label_kind: kind})
+    })).json();
+  } catch(e){ revSetStatus('Falha: ' + e); revEl.label.disabled=false; return; }
+  if(data.status !== 'ok'){ revSetStatus(data.message || 'erro'); revEl.label.disabled=false; revUpdateCurrent(); return; }
+  clip.event_type = data.event_type; clip.side = data.side;
+  clip.label = data.label; clip.label_kind = data.label_kind;
+  clip.label_overridden = true;
+  revSetStatus(`Rótulo de ${clip.folder} alterado para "${data.label}".`);
+  revUpdateCurrent();
+}
+
+async function revRebuild(){
+  const group = revEl.group.value;
+  if(!group) return;
+  if(!confirm('Reconstruir o vídeo de revisão só com os clipes restantes?')) return;
+  revEl.rebuild.disabled = true;
+  revSetStatus('Reconstruindo vídeo…');
+  let data;
+  try {
+    data = await (await fetch('/api/revisao/rebuild', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({group, mode:'deviation'})
+    })).json();
+  } catch(e){ revSetStatus('Falha: ' + e); revEl.rebuild.disabled=false; return; }
+  revEl.rebuild.disabled = false;
+  if(data.status !== 'ok'){ revSetStatus(data.message || 'erro'); return; }
+  revSetStatus(`Reconstruído: ${data.clips} clipe(s), ${data.frames} frames.`);
+  revLoadIndex(group);
+}
+
+revEl.reload.addEventListener('click', revLoadGroups);
+revEl.group.addEventListener('change', () => revLoadIndex(revEl.group.value));
+revEl.rebuild.addEventListener('click', revRebuild);
+revEl.exclude.addEventListener('click', revExcludeCurrent);
+revEl.label.addEventListener('change', revChangeLabel);
+revEl.prev.addEventListener('click', () => revStep(-1));
+revEl.next.addEventListener('click', () => revStep(1));
+revEl.speed.addEventListener('change', revApplySpeed);
+// Browsers reset playbackRate when a new source loads; reassert it.
+revEl.video.addEventListener('loadedmetadata', revApplySpeed);
+revEl.video.addEventListener('ratechange', () => {
+  const r = String(revEl.video.playbackRate);
+  if([...revEl.speed.options].some(o => o.value === r)) revEl.speed.value = r;
+});
+revEl.video.addEventListener('timeupdate', revUpdateCurrent);
+revEl.video.addEventListener('seeked', revUpdateCurrent);
+
 // ═══ Tabbed views ═══════════════════════════════
-const VIEWS = ['anotar','frames','inferencia','lote','desvios','datasets'];
+const VIEWS = ['anotar','frames','inferencia','ativacao','lote','desvios','revisao','datasets'];
 function setView(name){
   if(!VIEWS.includes(name)) name = 'anotar';
   // Touch only view-* classes so clip-vertical/clip-horizontal (orientation)
@@ -2096,12 +2604,16 @@ function setView(name){
     t.classList.toggle('active', t.dataset.view === name));
   try { localStorage.setItem('sensecv-view', name); } catch(e) {}
   // Canvases sized to zero while their container was hidden; fix on reveal.
-  if(name === 'anotar' || name === 'inferencia'){
+  if(name === 'anotar' || name === 'inferencia' || name === 'ativacao'){
     applyVideoOrientation();
     Object.values(charts).forEach(c => { try { c.resize(); } catch(e) {} });
   }
   // Entering the frames window: (re)load the large selection for the crop.
   if(name === 'frames'){ loadSsimVisualizer(); }
+  // Entering the activation window: compute Grad-CAM maps for the current frame.
+  if(name === 'ativacao'){ requestActivation(true); }
+  // Entering revisão: load the list of groups that have a review video.
+  if(name === 'revisao'){ revLoadGroups(); }
 }
 document.querySelectorAll('#tabbar .tab').forEach(t =>
   t.addEventListener('click', () => setView(t.dataset.view)));

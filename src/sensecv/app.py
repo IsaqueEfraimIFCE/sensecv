@@ -317,6 +317,102 @@ def external_input_at_times(folder, query_t):
             result.append(int(buttons[idx]))
     return result
 
+# Weinberg step-length constant: L = K * (a_max - a_min)^(1/4) per step, with
+# acceleration in m/s². ~0.5 gives realistic ~0.6-0.9 m strides; tune per gait.
+STEP_LENGTH_K = float(os.environ.get('SENSECV_STEP_LENGTH_K', '0.5'))
+
+
+def _step_forward_speed(acc_t_us, acc_v, query_us, k=STEP_LENGTH_K):
+    """Forward speed (m/s) from gait *steps*, with no acceleration integration.
+
+    Pedestrian dead-reckoning instead of double-integration (which drifts):
+      1. Dynamic acceleration = |a| minus its ~0.5 s rolling mean (drops gravity;
+         the magnitude is orientation-independent and pulses once per step).
+      2. Detect steps as peaks above an adaptive threshold, honouring a
+         refractory gap (cadence capped near 3.3 Hz).
+      3. Each step's length is Weinberg's L = k·(a_max − a_min)^(1/4) over the
+         step interval; forward speed across that interval = L / step_period.
+      4. Speed is held per step interval and 0 where there is no stepping.
+    Returned aligned to `query_us` (sample-and-hold).
+    """
+    t = np.asarray(acc_t_us, dtype=np.float64) / 1e6
+    q = np.asarray(query_us, dtype=np.float64) / 1e6
+    if len(t) < 8:
+        return np.zeros(len(q))
+    amag = np.linalg.norm(np.asarray(acc_v, dtype=np.float64), axis=1)
+    dt = float(np.median(np.diff(t)))
+    if not (dt > 1e-4):
+        dt = 0.01
+    fs = 1.0 / dt
+    win = max(3, int(round(0.5 * fs)))
+    base = np.convolve(amag, np.ones(win) / win, mode='same')
+    dyn = amag - base
+    thr = max(0.6 * float(np.std(dyn)), 0.4)
+    min_gap = max(1, int(round(0.30 * fs)))     # cadence ceiling ~3.3 Hz
+    peaks = []
+    last = -(10 ** 9)
+    for i in range(1, len(dyn) - 1):
+        if (dyn[i] > thr and dyn[i] >= dyn[i - 1] and dyn[i] > dyn[i + 1]
+                and (i - last) >= min_gap):
+            peaks.append(i)
+            last = i
+    # Per-step speed (Weinberg length / step period), placed at the step midpoint.
+    step_t, step_v = [], []
+    for j in range(1, len(peaks)):
+        a, b = peaks[j - 1], peaks[j]
+        period = t[b] - t[a]
+        if not (0.30 <= period <= 1.25):        # plausible step period (0.8-3.3 Hz)
+            continue
+        seg = amag[a:b + 1]
+        rng = float(seg.max() - seg.min())
+        if rng <= 0:
+            continue
+        step_t.append(0.5 * (t[a] + t[b]))
+        step_v.append((k * rng ** 0.25) / period)
+    if not step_t:
+        return np.zeros(len(q))
+
+    # Build a *continuous* speed curve (not a stair): interpolate between step
+    # midpoints, ramping up from rest at the clip start and back down to rest if
+    # stepping stops well before the end. Then smooth lightly.
+    anchor_t = [t[0]] + step_t
+    anchor_v = [0.0] + step_v
+    if (t[-1] - step_t[-1]) > 0.6:              # stepping ceased -> ramp to rest
+        anchor_t += [step_t[-1] + 0.3, t[-1]]
+        anchor_v += [0.0, 0.0]
+    else:
+        anchor_t += [t[-1]]
+        anchor_v += [step_v[-1]]
+    cont = np.interp(t, anchor_t, anchor_v)
+    sm = max(3, int(round(0.4 * fs)))
+    cont = np.convolve(cont, np.ones(sm) / sm, mode='same')
+    qi = np.clip(np.searchsorted(t, q), 0, len(t) - 1)
+    return cont[qi]
+
+
+def _heading_lateral_axis(vel_xy):
+    """Forward/lateral unit axes in the horizontal plane from movement direction.
+
+    Forward = dominant horizontal-velocity direction (speed-weighted principal
+    component, signed so the mean motion is positive). Lateral = forward rotated
+    +90° (left of travel). Returns (forward_hat, lateral_hat) as 2-vectors.
+    """
+    H = np.asarray(vel_xy, dtype=np.float64).reshape(-1, 2)
+    spd = np.linalg.norm(H, axis=1)
+    if not spd.any():
+        return np.array([1.0, 0.0]), np.array([0.0, 1.0])
+    M = (H * spd[:, None]).T @ H                 # speed-weighted scatter
+    _w, vecs = np.linalg.eigh(M)
+    fwd = vecs[:, -1]                            # principal direction
+    mean_v = (H * spd[:, None]).sum(0)
+    if float(np.dot(mean_v, fwd)) < 0:
+        fwd = -fwd
+    n = float(np.linalg.norm(fwd))
+    fwd = fwd / n if n > 1e-9 else np.array([1.0, 0.0])
+    lat = np.array([-fwd[1], fwd[0]])
+    return fwd, lat
+
+
 def compute_velocities(acc_data, rot_data, ft_us):
     acc_t = np.array([a['time_usec'] for a in acc_data], dtype=np.float64)
     acc_v = np.array([[a['x'],a['y'],a['z']] for a in acc_data])
@@ -362,10 +458,19 @@ def compute_velocities(acc_data, rot_data, ft_us):
         rec.append((t,vel.copy()))
 
     vt=np.array([r[0] for r in rec]); vv=np.array([r[1] for r in rec])
+    # Lateral velocity = leaky-integrated horizontal velocity projected onto the
+    # axis perpendicular to the travel heading (the pipeline lateral component).
+    _fwd, lat_hat = _heading_lateral_axis(vv[:, :2])
+    lat_at_rec = vv[:, :2] @ lat_hat
+    # Forward velocity from gait steps (drift-free), sampled at frame times.
+    fwd_at_frame = _step_forward_speed(acc_t, acc_v, ft)
     result=[]
-    for f in ft:
+    for fi, f in enumerate(ft):
         i=min(max(int(np.searchsorted(vt,f)),0),len(vv)-1); v=vv[i]
-        result.append({'vx':float(v[0]),'vy':float(v[1]),'vz':float(v[2]),'speed':float(np.linalg.norm(v))})
+        result.append({'vx':float(v[0]),'vy':float(v[1]),'vz':float(v[2]),
+                       'speed':float(np.linalg.norm(v)),
+                       'lateral':float(lat_at_rec[i]),
+                       'forward':float(fwd_at_frame[fi])})
     return result
 
 _cache = OrderedDict()
@@ -1679,6 +1784,30 @@ def suggest_lateral_deviation(idx, window_sec=1.0, dir_window_sec=2.0):
 IMU_EVENT_DELTA_SEC = float(os.environ.get('SENSECV_IMU_EVENT_DELTA_SEC', '1.0'))
 IMU_EVENT_PERSIST_SEC = float(os.environ.get('SENSECV_IMU_EVENT_PERSIST_SEC', '0.4'))
 IMU_STOP_MIN_SEC = float(os.environ.get('SENSECV_IMU_STOP_MIN_SEC', '1.0'))
+# Stop-onset fallback for clips with no desvio: a standstill stretch shorter
+# than IMU_STOP_MIN_SEC still marks where the person started to halt, because
+# recordings often end < 1 s after the stop (see [[imu-event-labeling]]).
+IMU_STOP_ONSET_MIN_SEC = float(os.environ.get('SENSECV_IMU_STOP_ONSET_MIN_SEC', '0.3'))
+# A stop cut only fires when the standstill is *confirmed*: it runs to the end
+# of the clip (the person does not resume walking) and lasts at least this long,
+# so the person verifiably stays put instead of just pausing.
+IMU_STOP_CONFIRM_SEC = float(os.environ.get('SENSECV_IMU_STOP_CONFIRM_SEC', '0.8'))
+# A slow-down/stop only ever occurs in the clip's final stretch (the person
+# halts at the end). Its onset must fall within the last IMU_STOP_TAIL_SEC
+# seconds, otherwise it is a mid-clip pause, not the closing stop.
+IMU_STOP_TAIL_SEC = float(os.environ.get('SENSECV_IMU_STOP_TAIL_SEC', '3.0'))
+# A lateral deviation never occurs at the very start or end of a clip; desvio
+# events whose onset/return falls within this margin of either edge are
+# rejected as boundary artefacts (camera settling, the closing stop/turn).
+IMU_DEVIATION_EDGE_MARGIN_SEC = float(os.environ.get('SENSECV_IMU_DEVIATION_EDGE_MARGIN_SEC', '1.0'))
+# Step-cadence detection: a stop is when the step rhythm disappears at the clip
+# end. Gait periodicity is measured by autocorrelation over a sliding window;
+# a window counts as "stepping" when its peak periodicity reaches this strength.
+IMU_STEP_WINDOW_SEC = float(os.environ.get('SENSECV_IMU_STEP_WINDOW_SEC', '2.0'))
+IMU_STEP_HOP_SEC = float(os.environ.get('SENSECV_IMU_STEP_HOP_SEC', '0.25'))
+IMU_STEP_PERIODICITY = float(os.environ.get('SENSECV_IMU_STEP_PERIODICITY', '0.3'))
+# Clips shorter than this can't show a walk-then-stop transition.
+IMU_STOP_MIN_CLIP_SEC = float(os.environ.get('SENSECV_IMU_STOP_MIN_CLIP_SEC', '3.5'))
 IMU_EXPANDED_MARGIN_SEC = float(os.environ.get('SENSECV_IMU_EXPANDED_MARGIN_SEC', '0.3'))
 IMU_DEVIATION_YAW_DEG_S = float(os.environ.get('SENSECV_IMU_DEVIATION_YAW_DEG_S', '25.0'))
 IMU_DEVIATION_LAT_VEL = float(os.environ.get('SENSECV_IMU_DEVIATION_LAT_VEL', '0.035'))
@@ -2045,6 +2174,91 @@ def detect_imu_events(idx, delta=None):
 DEVIATION_CUT_WINDOW = os.environ.get('SENSECV_DEVIATION_CUT_WINDOW', 'decisao')
 
 
+def _step_rhythm(amag, fps):
+    """Per-window step-cadence strength along the clip.
+
+    Walking is periodic (one accel pulse per step); standing still is not. For
+    each sliding window (IMU_STEP_WINDOW_SEC, hop IMU_STEP_HOP_SEC) the
+    normalized autocorrelation peak in the step band (period 0.3-1.0 s, i.e.
+    1-3.3 Hz cadence) measures how rhythmic that stretch is. Returns
+    (centers_s, periodicity) arrays; periodicity >= IMU_STEP_PERIODICITY marks a
+    window where the person is taking steps. This ignores the absolute energy,
+    so the start/end phone-handling spikes (broadband, non-periodic) do not read
+    as walking.
+    """
+    x = np.asarray(amag, dtype=np.float64)
+    n = len(x)
+    w = max(8, int(round(fps * IMU_STEP_WINDOW_SEC)))
+    hop = max(1, int(round(fps * IMU_STEP_HOP_SEC)))
+    lo = max(1, int(round(fps * 0.3)))
+    hi = int(round(fps * 1.0))
+    centers, per = [], []
+    for s in range(0, max(1, n - w + 1), hop):
+        seg = x[s:s + w]
+        seg = seg - seg.mean()
+        ac = np.correlate(seg, seg, 'full')[len(seg) - 1:]
+        if ac[0] <= 1e-9:
+            p = 0.0
+        else:
+            ac = ac / ac[0]
+            h = min(len(ac) - 1, hi)
+            p = float(np.max(ac[lo:h])) if h > lo else 0.0
+        centers.append((s + w / 2.0) / fps)
+        per.append(p)
+    return np.array(centers), np.array(per)
+
+
+def detect_stop_onset(idx):
+    """Time the step rhythm disappears at the clip end, for clips with no desvio.
+
+    A stop is when the person *stops taking steps* before the recording ends:
+    the gait cadence is present earlier and then ceases and stays gone through
+    the final sample. T1 (`stop_time`) is the onset of that cadence loss — the
+    instant stepping stops. It must fall within the clip's final
+    IMU_STOP_TAIL_SEC seconds (the stop always closes the clip). Returns None
+    when the person is still stepping at the end (a free walk) or never has a
+    clear gait.
+    """
+    series = _imu_event_series(idx)
+    fps, amag = series['fps'], series['amag']
+    duration = series['duration_s']
+    if duration < IMU_STOP_MIN_CLIP_SEC:
+        return None  # too short to show a walk-then-stop transition
+    centers, per = _step_rhythm(amag, fps)
+    if len(per) < 3:
+        return None
+    stepping = per >= IMU_STEP_PERIODICITY
+    if not stepping.any():
+        return None  # never a clear gait -> not a "stop"
+    if stepping[-1]:
+        return None  # still stepping at the end -> free walk, not a stop
+    stepping_idx = np.nonzero(stepping)[0]
+    onset = float(centers[int(stepping_idx[-1]) + 1])
+    if onset < duration - IMU_STOP_TAIL_SEC:
+        return None  # cadence loss is not in the clip's closing stretch
+    return {'t1': onset, 't2': duration, 'fps': fps, 'duration_s': duration}
+
+
+def detect_free_walk_span(idx):
+    """Whole video for clips with no desvio and no stop — a free walk.
+
+    A clip with a clear gait that never deviates and never stops (the person is
+    still stepping at the end, see `detect_stop_onset`) is a *free walk*
+    (caminhada livre): unobstructed forward walking start to finish, its own
+    dataset class. The cut is the entire video [0, duration]. Returns None only
+    when the clip has no discernible gait at all.
+    """
+    series = _imu_event_series(idx)
+    fps, amag = series['fps'], series['amag']
+    _, per = _step_rhythm(amag, fps)
+    if len(per) == 0 or not (per >= IMU_STEP_PERIODICITY).any():
+        return None  # no gait at all
+    return {
+        't1': 0.0, 't2': float(series['duration_s']),
+        'fps': fps, 'duration_s': float(series['duration_s']),
+    }
+
+
 def suggest_deviation_cut(idx, delta=None, window=None):
     """Suggested deviation cut from the IMU event windows (PDF §2.2/§2.3).
 
@@ -2054,7 +2268,19 @@ def suggest_deviation_cut(idx, delta=None, window=None):
       'acao'      -> [T1, T2]            the deviation execution
       'expandido' -> [T1-Δ, T2+margem]   both, robust to sync uncertainty
     Side (LEFT/RIGHT) comes from the same event's direction, so cut and label
-    are always consistent. Returns found=False when no desvio qualifies.
+    are always consistent.
+
+    Calibration (per recording convention):
+      - desvio never sits at the very start or end of the clip; edge events
+        within IMU_DEVIATION_EDGE_MARGIN_SEC of either boundary are dropped.
+      - parada only ever closes the clip (onset in the last IMU_STOP_TAIL_SEC s,
+        enforced in `detect_stop_onset`).
+      - livre is the only cut that spans the *entire* video [0, duration].
+
+    Two fallbacks when there is no desvio: first the stop onset (`parada`,
+    `detect_stop_onset`); then, with neither desvio nor parada, the clip is a
+    free walk (`livre`, `detect_free_walk_span`) and the whole video is
+    returned. Only a clip with no usable walking yields found=False.
     """
     window = window or DEVIATION_CUT_WINDOW
     try:
@@ -2062,10 +2288,63 @@ def suggest_deviation_cut(idx, delta=None, window=None):
     except Exception as e:
         return {'found': False, 'mode': 'deviation', 'has_vertical': True,
                 'message': f'IMU indisponivel: {e}'}
+    duration_clip = float(result.get('duration_s') or 0.0)
+    margin = IMU_DEVIATION_EDGE_MARGIN_SEC
     desvios = [e for e in result.get('events', []) if e.get('type') == 'desvio']
+    # A deviation never happens at the very start or end of the clip; drop any
+    # desvio whose onset/return sits inside the edge margin (only when the clip
+    # is long enough that a margin on both sides still leaves a middle).
+    if duration_clip > 2 * margin:
+        desvios = [
+            e for e in desvios
+            if float(e.get('t1', 0.0)) >= margin
+            and float(e.get('t2', duration_clip)) <= duration_clip - margin
+        ]
     if not desvios:
+        # No lateral deviation: fall back to the moment the person starts to
+        # stop. Cut the same PDF label window around the stop onset (T1), so a
+        # 'decisao' cut frames the scene just before the halt.
+        try:
+            stop = detect_stop_onset(idx)
+        except Exception:
+            stop = None
+        if stop is not None:
+            delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
+            windows = _event_windows(stop['t1'], stop['t2'], delta_v, stop['duration_s'])
+            win = windows.get(window) or windows.get('decisao')
+            start, end = float(win[0]), float(win[1])
+            if end - start < 0.2:  # near clip-start truncation: usable minimum
+                start = max(0.0, end - 0.2)
+            return {
+                'found': True, 'mode': 'deviation', 'window': window,
+                'has_vertical': True, 'event_type': 'parada',
+                'start': round(start, 3), 'end': round(end, 3),
+                't1': round(stop['t1'], 3), 't2': round(stop['t2'], 3),
+                'delta': delta_v, 'direction': None, 'side': 'NONE',
+                'stop_time': round(stop['t1'], 3),
+                'message': 'sem desvio: corte na parada (inicio da parada)',
+            }
+        # No desvio and no parada: free walk (caminhada livre). This is the only
+        # case where the *entire* video is the cut — unobstructed forward
+        # walking, start to finish, is its own class.
+        try:
+            free = detect_free_walk_span(idx)
+        except Exception:
+            free = None
+        if free is not None:
+            start, end = 0.0, float(free['duration_s'])
+            if end - start < 0.2:  # degenerate clip: keep a usable minimum
+                end = start + 0.2
+            return {
+                'found': True, 'mode': 'deviation', 'window': window,
+                'has_vertical': True, 'event_type': 'livre',
+                'start': round(start, 3), 'end': round(end, 3),
+                't1': round(start, 3), 't2': round(end, 3),
+                'delta': result.get('delta'), 'direction': None, 'side': 'NONE',
+                'message': 'sem desvio nem parada: caminhada livre (trecho util)',
+            }
         return {'found': False, 'mode': 'deviation', 'has_vertical': True,
-                'message': 'nenhum desvio detectado pela IMU'}
+                'message': 'nenhum desvio, parada ou caminhada detectados pela IMU'}
     best = max(desvios, key=lambda e: e.get('strength', 0.0))
     windows = best.get('windows', {})
     win = windows.get(window) or windows.get('decisao') or [best['t1'], best['t2']]
@@ -2075,6 +2354,7 @@ def suggest_deviation_cut(idx, delta=None, window=None):
     side = {'esquerda': 'LEFT', 'direita': 'RIGHT'}.get(best.get('direction'), 'NONE')
     return {
         'found': True, 'mode': 'deviation', 'window': window, 'has_vertical': True,
+        'event_type': 'desvio',
         'start': round(start, 3), 'end': round(end, 3),
         't1': best['t1'], 't2': best['t2'], 'delta': result.get('delta'),
         'direction': best.get('direction'), 'side': side,
@@ -2486,6 +2766,210 @@ def sensemodel_frame_classification(idx, time_s, exact=False):
     return result
 
 
+# ─── Class-activation (Grad-CAM) maps ────────────────────────────────────────
+# Grad-CAM heatmaps for the live frame, exposing where each model "looks":
+#   • DroNet collision (classification) head           -> COLLISION/CLEAR
+#   • SenseCV two-head .keras model, obstacle head 1   -> NONE/OBSTACLE
+#   • SenseCV two-head .keras model, deviation head 2  -> LEFT/RIGHT/NONE
+# Each map is returned as a self-contained PNG data URI (heatmap blended over the
+# exact pixels that model received), so the viewer can show them side by side.
+_activation_cache = OrderedDict()
+
+
+def _cam_to_data_uri(cam, base_bgr, alpha=0.5):
+    """Normalize a (H,W) CAM, colorize it, blend over a BGR base, return a PNG data URI."""
+    import cv2
+    import base64
+    cam = np.asarray(cam, dtype=np.float32)
+    cam = cam - float(cam.min())
+    peak = float(cam.max())
+    if peak > 1e-8:
+        cam = cam / peak
+    cam_u8 = (cam * 255.0).astype('uint8')
+    h, w = base_bgr.shape[:2]
+    cam_u8 = cv2.resize(cam_u8, (w, h), interpolation=cv2.INTER_CUBIC)
+    heat = cv2.applyColorMap(cam_u8, cv2.COLORMAP_JET)
+    overlay = cv2.addWeighted(base_bgr, 1.0 - alpha, heat, alpha, 0.0)
+    ok, buf = cv2.imencode('.png', overlay)
+    if not ok:
+        raise RuntimeError('falha ao codificar PNG do mapa de ativacao')
+    return 'data:image/png;base64,' + base64.b64encode(buf.tobytes()).decode('ascii')
+
+
+def _dronet_activation(frame_bgr):
+    """Grad-CAM over DroNet's last conv layer for the collision (classification) head."""
+    runtime = _load_dronet_runtime()
+    if runtime['error']:
+        return {'available': False, 'error': runtime['error']}
+    torch = runtime['torch']
+    model = runtime['model']
+    try:
+        import cv2
+        tensor, crop = runtime['preprocess_bgr'](frame_bgr)
+        target = model.conv9.conv  # last 3x3 conv in residual block 3
+        store = {}
+        h_fwd = target.register_forward_hook(
+            lambda m, i, o: store.__setitem__('act', o))
+        h_bwd = target.register_full_backward_hook(
+            lambda m, gi, go: store.__setitem__('grad', go[0]))
+        try:
+            model.zero_grad(set_to_none=True)
+            _steer, coll = model(tensor)
+            coll.backward()
+            act = store['act'][0].detach()    # (C, H, W)
+            grad = store['grad'][0].detach()  # (C, H, W)
+        finally:
+            h_fwd.remove()
+            h_bwd.remove()
+        weights = grad.mean(dim=(1, 2))
+        cam = torch.relu((weights[:, None, None] * act).sum(dim=0)).cpu().numpy()
+        prob = float(coll.item())
+        base = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        return {
+            'available': True,
+            'label': 'COLLISION' if prob >= 0.5 else 'CLEAR',
+            'prob': prob,
+            'image': _cam_to_data_uri(cam, base),
+        }
+    except Exception as e:
+        return {'available': False, 'error': str(e)}
+
+
+def _keras_last_conv_layer(model):
+    """Last layer with a 4D (B,H,W,C) output — the conv feature map for Grad-CAM."""
+    for layer in reversed(model.layers):
+        try:
+            shape = layer.output.shape
+        except Exception:
+            continue
+        if shape is not None and len(shape) == 4:
+            return layer
+    return None
+
+
+def _sensemodel_activation(frame_bgr):
+    """Grad-CAM for the two-head .keras model: obstacle (head 1) and deviation (head 2)."""
+    runtime = _load_sensemodel_runtime()
+    if runtime['error']:
+        err = {'available': False, 'error': runtime['error']}
+        return err, dict(err)
+    model = runtime['model']
+    try:
+        import cv2
+        import tensorflow as tf
+        last_conv = _keras_last_conv_layer(model)
+        if last_conv is None:
+            raise RuntimeError('nenhuma camada convolucional encontrada no modelo')
+
+        inp = _sensemodel_preprocess(frame_bgr, model)[None, ...]  # raw 0-255
+        disp = inp[0]
+        if disp.shape[-1] == 1:
+            base = cv2.cvtColor(disp.astype('uint8'), cv2.COLOR_GRAY2BGR)
+        else:
+            base = cv2.cvtColor(disp.astype('uint8'), cv2.COLOR_RGB2BGR)
+
+        grad_model = tf.keras.Model(model.inputs,
+                                    [last_conv.output] + list(model.outputs))
+        x = tf.convert_to_tensor(inp)
+        with tf.GradientTape(persistent=True) as tape:
+            outputs = grad_model(x, training=False)
+            conv_out = outputs[0]
+            preds = outputs[1:]
+            obstacle_t = next((p for p in preds if p.shape[-1] == 2), preds[0])
+            deviation_t = next((p for p in preds if p.shape[-1] == 3), preds[-1])
+            obs_idx = int(tf.argmax(obstacle_t[0]))
+            dev_idx = int(tf.argmax(deviation_t[0]))
+            obs_target = obstacle_t[0, obs_idx]
+            dev_target = deviation_t[0, dev_idx]
+
+        def _cam(target):
+            grads = tape.gradient(target, conv_out)
+            weights = tf.reduce_mean(grads, axis=(0, 1, 2))
+            cam = tf.reduce_sum(conv_out[0] * weights, axis=-1)
+            return tf.nn.relu(cam).numpy()
+
+        obs_cam = _cam(obs_target)
+        dev_cam = _cam(dev_target)
+        del tape
+
+        obs_vec = obstacle_t[0].numpy().tolist()
+        dev_vec = deviation_t[0].numpy().tolist()
+        obstacle = {
+            'available': True,
+            'label': SENSECV_OBSTACLE_LABELS[obs_idx] if obs_idx < len(SENSECV_OBSTACLE_LABELS) else str(obs_idx),
+            'prob': float(obs_vec[obs_idx]),
+            'image': _cam_to_data_uri(obs_cam, base),
+        }
+        deviation = {
+            'available': True,
+            'label': SENSECV_DEVIATION_LABELS[dev_idx] if dev_idx < len(SENSECV_DEVIATION_LABELS) else str(dev_idx),
+            'prob': float(dev_vec[dev_idx]),
+            'image': _cam_to_data_uri(dev_cam, base),
+        }
+        return obstacle, deviation
+    except Exception as e:
+        err = {'available': False, 'error': str(e)}
+        return err, dict(err)
+
+
+def activation_maps_frame(idx, time_s, exact=False):
+    """Decode the requested frame once and build all three Grad-CAM maps for it."""
+    try:
+        import cv2
+    except Exception as e:
+        return {'available': False, 'error': f'OpenCV indisponivel: {e}'}
+
+    video_path = clip_video_path(idx)
+    mtime = os.path.getmtime(video_path)
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return {'available': False, 'error': 'video unreadable'}
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    if fps <= 0 or frame_count <= 0:
+        cap.release()
+        return {'available': False, 'error': 'invalid video metadata'}
+
+    duration = frame_count / fps
+    sample_time = max(0.0, min(float(time_s or 0.0), duration))
+    if not exact:
+        sample_time = math.floor(sample_time * DRONET_SAMPLE_FPS) / DRONET_SAMPLE_FPS
+    frame_idx = min(frame_count - 1, max(0, int(round(sample_time * fps))))
+
+    key = (CLIPS[idx], mtime, frame_idx)
+    if key in _activation_cache:
+        _activation_cache.move_to_end(key)
+        cap.release()
+        return _activation_cache[key]
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        return {'available': False, 'error': 'frame decode failed', 'frame': frame_idx}
+
+    dronet_map = _dronet_activation(frame)
+    obstacle_map, deviation_map = _sensemodel_activation(frame)
+    result = {
+        'available': True,
+        'clip': CLIPS[idx],
+        'frame': frame_idx,
+        'time_s': round(frame_idx / fps, 4),
+        'requested_time_s': round(float(time_s or 0.0), 4),
+        'sample_fps': DRONET_SAMPLE_FPS,
+        'exact': bool(exact),
+        'source_fps': round(fps, 4),
+        'model': os.path.basename(_sensemodel_runtime['path']),
+        'dronet': dronet_map,
+        'obstacle': obstacle_map,
+        'deviation': deviation_map,
+    }
+    _activation_cache[key] = result
+    if len(_activation_cache) > 24:
+        _activation_cache.popitem(last=False)
+    return result
+
+
 # ─── Uploaded-dataset manifest export ────────────────────────────────────────
 # Each uploaded dataset (group) may ship an .xlsx manifest describing every clip
 # (ID, LOCAL, DESCRICAO, POSICAO CELULAR, LOCAL OBSTACULO, ALTURA OBSTACULO; see
@@ -2686,6 +3170,302 @@ def build_manifest_review(mode='lateral'):
     frames = _write_export_review_video(videos, review_path)
     return {'status': 'ok', 'mode': mode, 'videos': len(videos), 'frames': frames,
             'path': review_path, 'url': _derived_file_url(review_path)}
+
+
+# ─── Revisão: cull bad clips from a group's review video ──────────────────────
+# The "Revisão" viewer plays a group's review_all_frames.mp4 (every cut clip's
+# frames concatenated at SSIM_REVIEW_FPS) and maps the frame under the playhead
+# back to the source clip via a persisted review_index.json. Marking a frame
+# "wrong" deletes that whole clip folder from the manifest_exports group (and its
+# sources.csv row). The index stays pinned to the *existing* video so the
+# frame→clip mapping never shifts mid-review; "Reconstruir" rebuilds the video
+# (and a fresh index) from the clips that survived.
+REVIEW_VIDEO_NAME = 'review_all_frames.mp4'
+REVIEW_INDEX_NAME = 'review_index.json'
+# Bump when the index schema changes so stale on-disk indexes get rebuilt.
+REVIEW_INDEX_VERSION = 3
+
+
+def _review_clip_video(group_dir, folder):
+    return os.path.join(group_dir, folder, folder + '.mp4')
+
+
+def _deviation_label(event_type, side):
+    """Human label + colour code for a deviation cut's class."""
+    if event_type == 'desvio':
+        if side == 'LEFT':
+            return 'Desvio ◀ esquerda', 'desvio-left'
+        if side == 'RIGHT':
+            return 'Desvio ▶ direita', 'desvio-right'
+        return 'Desvio', 'desvio'
+    if event_type == 'parada':
+        return 'Parada', 'parada'
+    if event_type == 'livre':
+        return 'Caminhada livre', 'livre'
+    return '—', 'desconhecido'
+
+
+# The labels the operator can pick in Revisão -> (event_type, side).
+REVIEW_LABEL_KINDS = {
+    'desvio-left':  ('desvio', 'LEFT'),
+    'desvio-right': ('desvio', 'RIGHT'),
+    'parada':       ('parada', 'NONE'),
+    'livre':        ('livre',  'NONE'),
+}
+REVIEW_LABELS_NAME = 'review_labels.json'
+
+
+def _load_label_overrides(group_dir):
+    import json
+    path = os.path.join(group_dir, REVIEW_LABELS_NAME)
+    if os.path.isfile(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_label_overrides(group_dir, data):
+    import json
+    path = os.path.join(group_dir, REVIEW_LABELS_NAME)
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+
+
+def _read_sources_rows(group_dir):
+    """Ordered sources.csv rows (the order export_set wrote = review concat order)."""
+    import csv
+    path = os.path.join(group_dir, 'sources.csv')
+    if not os.path.isfile(path):
+        return []
+    with open(path, 'r', encoding='utf-8', newline='') as f:
+        return list(csv.DictReader(f))
+
+
+def _video_frame_count(path):
+    try:
+        import cv2
+    except Exception:
+        return 0
+    cap = cv2.VideoCapture(path)
+    if not cap.isOpened():
+        cap.release()
+        return 0
+    n = int(round(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+    cap.release()
+    return max(0, n)
+
+
+def build_review_index(group_dir, force=False):
+    """Build (or load) the frame→clip map for a group's review video.
+
+    Pinned to review_all_frames.mp4: rebuilt only when missing, forced, or older
+    than the video, so exclusions never invalidate offsets already in use.
+    Returns the index dict or None when there is no review video yet.
+    """
+    import json
+    video_path = os.path.join(group_dir, REVIEW_VIDEO_NAME)
+    if not os.path.isfile(video_path):
+        return None
+    index_path = os.path.join(group_dir, REVIEW_INDEX_NAME)
+    if not force and os.path.isfile(index_path):
+        try:
+            if os.path.getmtime(index_path) >= os.path.getmtime(video_path):
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    cached = json.load(f)
+                if cached.get('version') == REVIEW_INDEX_VERSION:
+                    return cached
+        except Exception:
+            pass
+
+    # Map each output folder back to its live clip index so we can recover the
+    # cut's class (desvio LEFT/RIGHT, parada, livre) from suggest_deviation_cut.
+    folder_to_idx = {_safe_clip_name(CLIPS[i]): i for i in range(len(CLIPS))}
+    overrides = _load_label_overrides(group_dir)
+
+    clips = []
+    cursor = 0
+    for row in _read_sources_rows(group_dir):
+        if not str(row.get('status', '')).startswith('ok'):
+            continue
+        folder = row.get('output_folder', '')
+        cut = _review_clip_video(group_dir, folder)
+        if not folder or not os.path.isfile(cut):
+            continue
+        n = _video_frame_count(cut)
+        if n <= 0:
+            continue
+        event_type, side = '', ''
+        src_idx = folder_to_idx.get(folder)
+        if src_idx is not None:
+            try:
+                sug = suggest_deviation_cut(src_idx)
+                event_type = sug.get('event_type', '') or ''
+                side = sug.get('side', '') or ''
+            except Exception:
+                pass
+        detected_label, _ = _deviation_label(event_type, side)
+        ov = overrides.get(folder)
+        overridden = bool(ov)
+        if overridden:
+            event_type = ov.get('event_type', event_type)
+            side = ov.get('side', side)
+        label, label_kind = _deviation_label(event_type, side)
+        clips.append({
+            'folder': folder,
+            'source_display': row.get('source_display', ''),
+            'start_frame': cursor,
+            'frame_count': n,
+            'end_frame': cursor + n,
+            'cut_start': row.get('start', ''),
+            'cut_end': row.get('end', ''),
+            'duration': row.get('duration', ''),
+            'status': row.get('status', ''),
+            'event_type': event_type,
+            'side': side,
+            'label': label,
+            'label_kind': label_kind,
+            'label_overridden': overridden,
+            'detected_label': detected_label,
+            'excluded': False,
+        })
+        cursor += n
+
+    index = {
+        'version': REVIEW_INDEX_VERSION,
+        'fps': SSIM_REVIEW_FPS,
+        'total_frames': cursor,
+        'video_url': _derived_file_url(video_path),
+        'clips': clips,
+    }
+    try:
+        with open(index_path, 'w', encoding='utf-8') as f:
+            json.dump(index, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
+    return index
+
+
+def list_review_groups(mode='deviation'):
+    """Every manifest-export group that has a review video to cull."""
+    out = []
+    if not os.path.isdir(MANIFEST_EXPORTS_DIR):
+        return out
+    for group in sorted(os.listdir(MANIFEST_EXPORTS_DIR)):
+        group_dir = os.path.join(MANIFEST_EXPORTS_DIR, group, mode)
+        if not os.path.isdir(group_dir):
+            continue
+        has_review = os.path.isfile(os.path.join(group_dir, REVIEW_VIDEO_NAME))
+        n_clips = sum(1 for r in _read_sources_rows(group_dir)
+                      if str(r.get('status', '')).startswith('ok'))
+        out.append({'group': group, 'mode': mode, 'has_review': has_review,
+                    'clips': n_clips})
+    return out
+
+
+def review_exclude_clip(group, mode, folder):
+    """Delete one clip folder from a manifest-export group + its sources.csv row.
+
+    Marks the clip excluded in the pinned review_index.json (offsets untouched).
+    """
+    import csv
+    import json
+    group_dir = _manifest_group_dir(group, mode)
+    base = os.path.abspath(group_dir)
+    clip_dir = os.path.abspath(os.path.join(base, folder))
+    if not clip_dir.startswith(base + os.sep) or not os.path.basename(clip_dir) == folder:
+        return {'status': 'error', 'message': 'folder invalido'}
+    if os.path.isdir(clip_dir):
+        shutil.rmtree(clip_dir, ignore_errors=True)
+
+    # Drop the row from sources.csv.
+    sources = os.path.join(group_dir, 'sources.csv')
+    if os.path.isfile(sources):
+        rows = _read_sources_rows(group_dir)
+        kept = [r for r in rows if r.get('output_folder') != folder]
+        if kept and (rows and kept != rows):
+            with open(sources, 'w', encoding='utf-8', newline='') as f:
+                w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+                w.writeheader(); w.writerows(kept)
+
+    # Mark excluded in the pinned index (no offset recompute).
+    index_path = os.path.join(group_dir, REVIEW_INDEX_NAME)
+    remaining = None
+    if os.path.isfile(index_path):
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index = json.load(f)
+            for c in index.get('clips', []):
+                if c.get('folder') == folder:
+                    c['excluded'] = True
+            remaining = sum(1 for c in index.get('clips', []) if not c.get('excluded'))
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(index, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+    return {'status': 'ok', 'group': group, 'mode': mode, 'folder': folder,
+            'remaining': remaining}
+
+
+def review_set_label(group, mode, folder, label_kind):
+    """Override one clip's class (desvio LEFT/RIGHT, parada, livre) in Revisão.
+
+    Persisted to review_labels.json so it survives index/video rebuilds, and
+    written straight into the pinned review_index.json for the live view.
+    """
+    import json
+    if label_kind not in REVIEW_LABEL_KINDS:
+        return {'status': 'error', 'message': f'rotulo invalido: {label_kind}'}
+    event_type, side = REVIEW_LABEL_KINDS[label_kind]
+    group_dir = _manifest_group_dir(group, mode)
+    if not os.path.isdir(os.path.join(group_dir, folder)):
+        return {'status': 'error', 'message': 'clipe nao encontrado'}
+
+    overrides = _load_label_overrides(group_dir)
+    overrides[folder] = {'event_type': event_type, 'side': side}
+    _save_label_overrides(group_dir, overrides)
+
+    label, _ = _deviation_label(event_type, side)
+    index_path = os.path.join(group_dir, REVIEW_INDEX_NAME)
+    if os.path.isfile(index_path):
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index = json.load(f)
+            for c in index.get('clips', []):
+                if c.get('folder') == folder:
+                    c.update(event_type=event_type, side=side, label=label,
+                             label_kind=label_kind, label_overridden=True)
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(index, f, ensure_ascii=False, indent=1)
+        except Exception:
+            pass
+    return {'status': 'ok', 'group': group, 'mode': mode, 'folder': folder,
+            'event_type': event_type, 'side': side, 'label': label,
+            'label_kind': label_kind}
+
+
+def review_rebuild_video(group, mode):
+    """Rebuild a group's review video + index from the surviving clips."""
+    group_dir = _manifest_group_dir(group, mode)
+    videos = []
+    for row in _read_sources_rows(group_dir):
+        if not str(row.get('status', '')).startswith('ok'):
+            continue
+        cut = _review_clip_video(group_dir, row.get('output_folder', ''))
+        if os.path.isfile(cut):
+            videos.append(cut)
+    if not videos:
+        return {'status': 'error', 'message': 'nenhum clipe restante para revisar'}
+    review_path = os.path.join(group_dir, REVIEW_VIDEO_NAME)
+    frames = _write_export_review_video(videos, review_path)
+    index = build_review_index(group_dir, force=True)
+    return {'status': 'ok', 'group': group, 'mode': mode, 'videos': len(videos),
+            'frames': frames, 'clips': len((index or {}).get('clips', []))}
 
 
 # ─── Deviation inspection video ──────────────────────────────────────────────
@@ -2989,6 +3769,18 @@ def api_sensemodel(idx):
     status = 200 if result.get('available') else 503
     return jsonify(result), status
 
+@app.route('/api/activation/<int:idx>')
+def api_activation(idx):
+    if idx<0 or idx>=len(CLIPS): return jsonify({'available':False,'error':'out of range'}),404
+    try:
+        time_s = float(request.args.get('time', '0') or 0)
+    except ValueError:
+        time_s = 0.0
+    exact = request.args.get('exact') in ('1', 'true', 'yes')
+    result = activation_maps_frame(idx, time_s, exact=exact)
+    status = 200 if result.get('available') else 503
+    return jsonify(result), status
+
 def _sensemodel_info():
     path = _sensemodel_runtime['path']
     return {
@@ -3255,6 +4047,59 @@ def api_manifest_export_review():
         return jsonify({'status':'error','message':str(e)}),500
     status = 200 if result.get('status') == 'ok' else 500
     return jsonify(result), status
+
+@app.route('/api/revisao/groups')
+def api_revisao_groups():
+    mode = request.args.get('mode', 'deviation')
+    return jsonify({'status': 'ok', 'mode': mode, 'groups': list_review_groups(mode)})
+
+@app.route('/api/revisao/index')
+def api_revisao_index():
+    mode = request.args.get('mode', 'deviation')
+    group = request.args.get('group', '')
+    if not group:
+        return jsonify({'status': 'error', 'message': 'group obrigatorio'}), 400
+    group_dir = _manifest_group_dir(group, mode)
+    index = build_review_index(group_dir)
+    if index is None:
+        return jsonify({'status': 'error', 'message': 'sem video de revisao para este grupo'}), 404
+    return jsonify({'status': 'ok', 'group': group, 'mode': mode, **index})
+
+@app.route('/api/revisao/exclude', methods=['POST'])
+def api_revisao_exclude():
+    body = request.json or {}
+    group = body.get('group', '')
+    mode = body.get('mode', 'deviation')
+    folder = body.get('folder', '')
+    if not group or not folder:
+        return jsonify({'status': 'error', 'message': 'group e folder obrigatorios'}), 400
+    result = review_exclude_clip(group, mode, folder)
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
+
+@app.route('/api/revisao/label', methods=['POST'])
+def api_revisao_label():
+    body = request.json or {}
+    group = body.get('group', '')
+    mode = body.get('mode', 'deviation')
+    folder = body.get('folder', '')
+    label_kind = body.get('label_kind', '')
+    if not group or not folder:
+        return jsonify({'status': 'error', 'message': 'group e folder obrigatorios'}), 400
+    result = review_set_label(group, mode, folder, label_kind)
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
+
+@app.route('/api/revisao/rebuild', methods=['POST'])
+def api_revisao_rebuild():
+    body = request.json or {}
+    group = body.get('group', '')
+    mode = body.get('mode', 'deviation')
+    if not group:
+        return jsonify({'status': 'error', 'message': 'group obrigatorio'}), 400
+    try:
+        result = review_rebuild_video(group, mode)
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    return jsonify(result), (200 if result.get('status') == 'ok' else 400)
 
 @app.route('/api/crop', methods=['POST'])
 def api_crop():

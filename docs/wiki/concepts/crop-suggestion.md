@@ -137,9 +137,53 @@ windows:
 `Δ` = `SENSECV_IMU_EVENT_DELTA_SEC` (default 1.0 s), `margem` =
 `SENSECV_IMU_EXPANDED_MARGIN_SEC` (0.3 s); the window is chosen with
 `SENSECV_DEVIATION_CUT_WINDOW` (default `decisao`). The side (`LEFT`/`RIGHT`)
-is the event's own `direction`, so cut and label are always consistent. Clips
-with no `desvio` return `found:false` and are skipped by the exporter. This is
-the cut written by `export_set(mode='deviation')`.
+is the event's own `direction`, so cut and label are always consistent. The
+desvio response carries `event_type: 'desvio'`. This is the cut written by
+`export_set(mode='deviation')`.
+
+### Stop-onset fallback (no desvio — confirmed halt only)
+When a clip has **no `desvio`**, `suggest_deviation_cut` falls back to **the
+moment the person starts to stop**. `detect_stop_onset(idx)` finds a standstill
+stretch (gait energy `std_mag < IMU_STOP_STD`) and returns its onset **T1** —
+but, **as of 2026-06-25**, only when the stop is *confirmed*: it must be
+**preceded by walking**, the person must **not resume walking afterwards**, and
+it must last `≥ SENSECV_IMU_STOP_CONFIRM_SEC` (default 0.8 s). A brief pause the
+person walks straight out of no longer counts. The crossing into standstill is
+**T1**; the same PDF label window is cut around it (`decisao` → `[T1-Δ, T1]`, the
+scene just before the halt), `event_type: 'parada'`, `stop_time` (= T1),
+`side: 'NONE'`. (The earlier 2026-06-23 version accepted any `≥ 0.3 s` dip *or*
+a run reaching the clip end, which let mid-walk pauses through.)
+
+> **Reality on the current dataset:** with the confirmed-stop rule, **0 of 389
+> clips** produce a parada cut. These captures end **mid-stride** — the person is
+> still walking right up to the final ~0.5 s, so a sustained standstill is never
+> recorded. Every dip below `IMU_STOP_STD` here is a sub-second mid-walk pause
+> the person walks out of, which the rule correctly rejects. Stop cuts will only
+> appear on footage that actually records the person settling into a halt.
+> Exporter and inspection video pick up the cut automatically through the shared
+> return shape when one does fire.
+
+### Free-walk fallback (no desvio, no parada — sustained walk only)
+**As of 2026-06-25**, a clip with **neither a desvio nor a confirmed parada** can
+be a **free walk** (caminhada livre): unobstructed forward walking, a legitimate
+third dataset class alongside desvio and parada. It qualifies only when there is
+a **long continuous walking run** — `detect_free_walk_span(idx)` merges gait runs
+split by gaps `< SENSECV_IMU_WALK_MERGE_GAP_SEC` (0.3 s, absorbs flicker) and
+requires the longest merged run to last `≥ SENSECV_IMU_FREE_WALK_MIN_SEC`
+(default 3.0 s). The cut is then the **whole usable walking span**
+`[first_walk, last_walk]` over the gait mask (`std_mag > IMU_WALK_STD`), returned
+`found:true` with `event_type: 'livre'`, `side: 'NONE'`, `direction: None`. A
+clip with only short or broken walking (no sustained walking-only period) returns
+`found:false` (`'nenhum desvio, parada ou caminhada detectados'`).
+
+Current scan (389 clips): **162 desvio, 0 parada, 97 livre, 130 none** (the 130
+fall through to `walking` mode in the viewer).
+
+The export/validation surfaces inherit this through the shared return shape:
+`export_set(mode='deviation')` exports the free-walk cut like any other, but
+`export_deviation_set` still keeps **only** `side ∈ {LEFT, RIGHT}`, so the
+deviation validation video stays desvio-only — `livre` and `parada` (both
+`side: 'NONE'`) are filtered out of it.
 
 ## Horizontal (walking-only) clips
 Clips from the extra input roots (the `SenseCV-*` folders, tracked in
@@ -203,11 +247,20 @@ images remain for dataset composition.
 ## UI integration ([[viewer-frontend]])
 - Auto-suggest: `loadClip()` calls `runAutoSuggest()`, which tries `lateral`
   first, then `walking`. The user preference is to start with the desvio-lateral
-  cut and use walking only as a fallback. Since `lateral` is the PDF cut, clips
-  with **no** IMU desvio return `found:false` and auto-suggest falls through to
-  `walking`.
+  cut and use walking only as a fallback. Since `lateral` is the PDF cut with its
+  desvio → parada → **livre** fallback chain, it now returns `found:true` for any
+  clip that contains walking (desvio cut, stop-onset cut, or whole-walk free
+  cut), so auto-suggest almost always settles on `lateral`; it only falls through
+  to `walking` when the clip has no usable walking at all. The toast tags the
+  result `caminhada livre` when `event_type==='livre'`.
 - Two buttons ("⬦ Caminhada", "⬦ Desvio lateral") re-run on demand through one
   `runSuggest(mode)` with a stale-request guard, under the **Anotar** tab.
+- **Cut-type badge** (`#cut-type-disp`): after every suggest cut (auto or
+  button), a persistent "Tipo de corte:" chip under the suggest buttons shows
+  the resolved class — `Desvio lateral (esquerda/direita)`, `Parada @ <t>`,
+  `Caminhada livre`, or `Caminhada` — colour-coded by `data-type`
+  (desvio/parada/livre/caminhada). `cutTypeInfo(d, mode)` derives it from the
+  response `event_type`/`side`; `hideCutType()` clears it on clip change.
 
 ## Tuning surface
 The classifier is trained from the current exports in `history.json` and cached

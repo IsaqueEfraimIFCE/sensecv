@@ -28,8 +28,8 @@ pill tab bar with an accent-glow active state, rounded cards with soft shadows,
 ## Layout
 - **Header** - median fps / duration / frame-count badges, capture-quality
   badges, clip name, prev/next nav, a **folder/group selector**, a grouped clip
-  selector, and a **tab bar** (`#tabbar`) selecting one of the six views.
-- **Tabbed views** (see [[#Tabbed views]]) - the page is split into six
+  selector, and a **tab bar** (`#tabbar`) selecting one of the seven views.
+- **Tabbed views** (see [[#Tabbed views]]) - the page is split into seven
   client-side views; only the active one's panels show. The video + charts
   "player" stays mounted and is shown on the two video-centric views.
 - **Persistent player** (`#player-left` + `.right`) - video, timeline canvas,
@@ -67,6 +67,12 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
   the DroNet triggers (3 FPS while playing, exact frame when paused/scrubbed)
   and reset lifecycle. Degrades to an error line if TensorFlow or the
   `best_model.keras` file is absent.
+- **Activation maps panel** - in the **Ativação** tab, `requestActivation()`
+  fetches `/api/activation/<idx>` and shows three Grad-CAM heatmaps (DroNet
+  collision, SenseCV obstacle/deviation) for the current frame. It is driven from
+  inside `requestDronet()` (shares the 3 fps / exact triggers) but **only fetches
+  when the tab is active** because each call runs two backprops. See
+  [[activation-maps]].
 - **Auto-suggested crop** - on `loadClip()`, `runAutoSuggest()` tries
   `lateral`, then `walking` (the retired `vertical` mode is no longer attempted).
   Lateral-deviation cuts are the first choice; walking is the fallback. A red
@@ -118,7 +124,7 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
 - **Export** - POSTs to `/api/crop`, then refreshes export state.
 
 ## Tabbed views
-The UI is one page split into **six client-side views**, switched by the header
+The UI is one page split into **seven client-side views**, switched by the header
 tab bar (no extra routes). `setView(name)` toggles a single `view-<name>` class on
 `<body>`; CSS shows only `[data-view="<name>"]` panels for the active view. It
 touches **only** `view-*` classes, never the `clip-vertical`/`clip-horizontal`
@@ -130,12 +136,13 @@ orientation classes. The last view is remembered in `localStorage`
 | Anotar | `anotar` | crop + classification + suggest buttons + IMU events + export |
 | Frames | `frames` | métrica + threshold + large frame-selection grid + review links |
 | Inferência | `inferencia` | DroNet + SenseCV `.keras` live panels + model swap |
+| Ativação | `ativacao` | Grad-CAM heatmaps for DroNet collision + SenseCV obstacle/deviation heads. See [[activation-maps]] |
 | Lote + Manifesto | `lote` | batch export + manifest export |
 | Desvios + Validação | `desvios` | deviation export + validation video |
 | Datasets | `datasets` | `.zip` import + export history |
 
-The persistent **player** (`#player-left` + `.right` charts) is shown only on
-`anotar`/`inferencia`; the other four views hide it and span full width
+The persistent **player** (`#player-left` + `.right` charts) is shown on
+`anotar`/`inferencia`/`ativacao`; the other four views hide it and span full width
 (`.main` grid → single column). Because the panels stay in the DOM (hidden, not
 removed), all existing element IDs and the DroNet/`.keras` live-update triggers
 keep working across tabs — the frame-selection controls (`#ssim-metric`,
@@ -143,7 +150,8 @@ keep working across tabs — the frame-selection controls (`#ssim-metric`,
 and `Anotar`'s Export still reads their values. On switching to a video view,
 `setView()` calls `applyVideoOrientation()` and `chart.resize()` on the three
 charts (Chart.js canvases compute zero size while their container is hidden); on
-switching to `Frames` it calls `loadSsimVisualizer()`.
+switching to `Frames` it calls `loadSsimVisualizer()`, and on switching to
+`Ativação` it calls `requestActivation(true)` for the exact current frame.
 
 ## Video orientation
 `applyVideoOrientation()` decides rotation from the frame the browser **actually
@@ -172,6 +180,7 @@ It re-runs on `loadedmetadata` and `resize`.
 ## Talks to
 [[api-routes]] (`/video/<idx>`, `/frame/<idx>/<source_index>.jpg`,
 `/api/data/<idx>`, `/api/dronet/<idx>`, `/api/sensemodel/<idx>`,
+`/api/activation/<idx>`,
 `/api/suggest/<idx>`, `/api/ssim/<idx>`, `/api/imu-events/<idx>`, `/api/crop`,
 `/api/batch-export`, `/api/manifest-export`, `/api/manifest-export/clip`,
 `/api/manifest-export/review`, `/api/export-state`, `/api/history`,
