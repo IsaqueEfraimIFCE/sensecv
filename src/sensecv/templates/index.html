@@ -494,7 +494,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
         <div style="font-weight:600;margin-bottom:6px">Recortando para a Revisão</div>
         <div id="recut-banner-info" style="font-size:.85em;color:#9fc6ec;margin-bottom:8px"></div>
         <div class="upload-row" style="gap:8px">
-          <button class="btn" id="recut-save">Salvar novo corte na revisão</button>
+          <button class="btn" id="recut-save">Salvar novo corte na revisão (c)</button>
           <button class="btn" id="recut-cancel">Cancelar</button>
         </div>
       </div>
@@ -2414,6 +2414,10 @@ document.addEventListener('keydown',e=>{
   if(e.key==='e') document.getElementById('btn-set-end').click();
   if(e.key===']') document.getElementById('btn-next').click();
   if(e.key==='[') document.getElementById('btn-prev').click();
+  // 'c' saves the recut back to Revisão, but only while a recut is in progress.
+  if(e.key==='c' && typeof revRecutTarget !== 'undefined' && revRecutTarget){
+    e.preventDefault(); document.getElementById('recut-save').click();
+  }
 });
 
 // ═══ Revisão: cull bad clips ════════════════════
@@ -2701,8 +2705,8 @@ async function saveRecut(){
         ssim_metric: getSsimMetric(), ssim_threshold: getSsimThreshold(),
       })
     })).json();
-  } catch(e){ showToast('Falha: ' + e, 'err'); btn.disabled=false; btn.textContent='Salvar novo corte na revisão'; return; }
-  btn.disabled = false; btn.textContent = 'Salvar novo corte na revisão';
+  } catch(e){ showToast('Falha: ' + e, 'err'); btn.disabled=false; btn.textContent='Salvar novo corte na revisão (c)'; return; }
+  btn.disabled = false; btn.textContent = 'Salvar novo corte na revisão (c)';
   if(data.status !== 'ok'){ showToast(data.message || 'erro ao recortar', 'err'); return; }
   const tgt = revRecutTarget;
   // Patch the in-memory clip so the panel reflects the new cut right away. We do

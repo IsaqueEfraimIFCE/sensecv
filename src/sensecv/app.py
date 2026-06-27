@@ -485,7 +485,7 @@ DRONET_WEIGHTS = os.environ.get('DRONET_WEIGHTS', os.path.join(DRONET_DIR, "repo
 DRONET_SAMPLE_FPS = 3.0
 SSIM_THRESHOLD = float(os.environ.get('SENSECV_SSIM_THRESHOLD', '0.985'))
 SSIM_MAX_GAP_SEC = float(os.environ.get('SENSECV_SSIM_MAX_GAP_SEC', '0.5'))
-SSIM_REVIEW_FPS = float(os.environ.get('SENSECV_SSIM_REVIEW_FPS', '12'))
+SSIM_REVIEW_FPS = float(os.environ.get('SENSECV_SSIM_REVIEW_FPS', '15'))
 SSIM_REVIEW_MAX_WIDTH = int(os.environ.get('SENSECV_SSIM_REVIEW_MAX_WIDTH', '960'))
 
 def _video_rotation(idx):
@@ -3738,13 +3738,13 @@ def review_rebuild_video(group, mode):
 
 def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
                       ssim_threshold=None, ssim_metric='ssim'):
-    """Re-cut one review clip to a new [start, end] window and rebuild the group.
+    """Re-cut one review clip to a new [start, end] window in place.
 
-    Re-runs the same export pipeline (clean ffmpeg cut + sensors + ssim) that
-    produced the original cut, overwriting the clip's folder in place, updates its
-    sources.csv row, then rebuilds the group's review video + index so the new cut
-    shows up immediately. Any manual label override survives (it is keyed on the
-    folder name, which does not change).
+    Re-cuts the clip video and re-saves every sensor sample in the new window
+    (no frame selector / SSIM — all frames from the cut are kept), overwriting the
+    clip's folder, then updates its sources.csv row. Any manual label override
+    survives (it is keyed on the folder name, which does not change). `ssim_*` are
+    accepted for backward compatibility with the route and ignored.
     """
     import csv
     group_dir = _manifest_group_dir(group, mode)
@@ -3784,9 +3784,6 @@ def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
     if not (end > start):
         return {'status': 'error', 'message': 'fim deve ser maior que inicio'}
 
-    selection = ssim_frame_selection(idx, start, end,
-                                     threshold=ssim_threshold, metric=ssim_metric)
-
     out_video = os.path.join(out_folder, folder + '.mp4')
     if os.path.isdir(out_folder):
         shutil.rmtree(out_folder, ignore_errors=True)
@@ -3802,18 +3799,11 @@ def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
         save_sensor_data(idx, start, end, out_folder)
     except Exception as e:
         sensor_error = str(e)
-    try:
-        save_ssim_selection(selection, out_folder)
-        save_ssim_review_videos(idx, start, end, selection, out_folder)
-    except Exception:
-        pass
 
+    # Update only columns common to every sources.csv schema (export and uploaded
+    # cut-datasets alike); never add ssim columns the uploaded ledger lacks.
     row.update(
         start=f'{start:.3f}', end=f'{end:.3f}', duration=f'{end - start:.3f}',
-        frames_before=selection.get('frames_before', ''),
-        frames_after=selection.get('frames_after', ''),
-        ssim_threshold=selection.get('ssim_threshold', ''),
-        ssim_status=selection.get('error', 'ok'),
         status=('ok_no_sensor: ' + sensor_error) if sensor_error else 'ok',
     )
     if rows:
