@@ -3737,7 +3737,7 @@ def review_rebuild_video(group, mode):
 
 
 def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
-                      ssim_threshold=None, ssim_metric='ssim'):
+                      source_display=None, ssim_threshold=None, ssim_metric='ssim'):
     """Re-cut one review clip to a new [start, end] window in place.
 
     Re-cuts the clip video and re-saves every sensor sample in the new window
@@ -3752,16 +3752,33 @@ def review_recut_clip(group, mode, folder, start, end, clip_idx=None,
     out_folder = os.path.abspath(os.path.join(base, folder))
     if not out_folder.startswith(base + os.sep) or os.path.basename(out_folder) != folder:
         return {'status': 'error', 'message': 'folder invalido'}
+    if not os.path.isdir(group_dir):
+        return {'status': 'error',
+                'message': f'grupo "{group}" não encontrado (recarregue a revisão)'}
 
     rows = _read_sources_rows(group_dir)
     row = next((r for r in rows if r.get('output_folder') == folder), None)
     if row is None:
-        return {'status': 'error', 'message': 'clipe nao encontrado em sources.csv'}
+        # Self-heal: the ledger lost this clip's row (or was rewritten by another
+        # operation). Rebuild a minimal row matching the existing schema so the
+        # recut still lands instead of failing. The caller's source_display /
+        # clip_idx still resolve the source clip below.
+        fieldnames = list(rows[0].keys()) if rows else [
+            'output_folder', 'source_display', 'start', 'end', 'duration',
+            'event_type', 'side', 'status']
+        row = {k: '' for k in fieldnames}
+        row['output_folder'] = folder
+        if 'source_display' in row and source_display:
+            row['source_display'] = source_display
+        if 'status' in row:
+            row['status'] = 'ok'
+        rows.append(row)
 
     # Resolve the live source-clip index: the sources.csv display name wins; the
-    # caller's clip_idx is a fallback for when the CLIPS ordering has shifted.
+    # caller's source_display / clip_idx are fallbacks when CLIPS ordering shifted
+    # or the ledger row was just rebuilt.
     idx = None
-    src_display = row.get('source_display', '')
+    src_display = row.get('source_display', '') or source_display or ''
     if src_display:
         try:
             idx = CLIPS.index(src_display)
@@ -4616,7 +4633,7 @@ def api_revisao_recut():
     try:
         result = review_recut_clip(
             group, mode, folder, body.get('start'), body.get('end'),
-            clip_idx=body.get('clip_idx'),
+            clip_idx=body.get('clip_idx'), source_display=body.get('source_display'),
             ssim_threshold=ssim_threshold, ssim_metric=ssim_metric)
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500

@@ -2701,6 +2701,7 @@ async function saveRecut(){
       body: JSON.stringify({
         group: revRecutTarget.group, mode: revRecutTarget.mode,
         folder: revRecutTarget.folder, clip_idx: currentIdx,
+        source_display: revRecutTarget.source_display || '',
         start: cropStart, end: cropEnd,
         ssim_metric: getSsimMetric(), ssim_threshold: getSsimThreshold(),
       })
