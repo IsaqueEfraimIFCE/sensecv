@@ -2,7 +2,7 @@
 type: entity
 tags: [backend, api, http]
 code_refs: [app.py]
-updated: 2026-06-18
+updated: 2026-07-03
 ---
 
 # API routes
@@ -30,7 +30,7 @@ integer index into the current `CLIPS` list.
 | GET | `/api/history` | JSON | Pruned contents of [[history-json]] |
 | GET | `/api/export-state` | JSON | Refreshes clips and returns clips/groups/history/export folders/next number |
 | GET | `/api/next-number` | JSON | `{number}` from actual export folders |
-| GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `walking` (default) / `lateral`. `lateral` is the PDF deviation cut (`suggest_deviation_cut`). The retired `vertical` mode falls through to `walking`. See [[crop-suggestion]] |
+| GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `walking` (default) / `lateral` / `trim`. `lateral` is the PDF deviation cut (`suggest_deviation_cut`); `trim` is the same cut with the desvio search bounded to `[2s, duration-2s]` on clips ≥ 8 s (`suggest_trim_cut`; short clips, parada, and livre keep the plain behavior). The retired `vertical` mode falls through to `walking`. See [[crop-suggestion]] |
 | GET | `/api/ssim/<int:idx>?start=&end=` | JSON | Full SSIM frame selection for a crop, including selected frame metadata and thumbnail URLs |
 | GET | `/api/imu-events/<int:idx>?delta=` | JSON | IMU capture-quality verdict plus desvio/reducao/parada events with T1/T2, label windows, and confidence. See [[imu-event-labeling]] |
 | POST | `/api/crop` | JSON | Performs the export. See [[export-pipeline]] |

@@ -2,7 +2,7 @@
 type: concept
 tags: [dronet, sensemodel, gradcam, interpretability, backend, frontend]
 code_refs: [src/sensecv/app.py, src/sensecv/templates/index.html, third_party/dronet/dronet_model.py]
-updated: 2026-06-19
+updated: 2026-06-28
 ---
 
 # Activation maps (Grad-CAM)
@@ -14,11 +14,23 @@ that model received. Three maps are rendered side by side:
 | Map | Model | Head | Labels |
 |---|---|---|---|
 | DroNet — colisão | DroNet ResNet-8 (PyTorch port) | collision / classification | `COLLISION` / `CLEAR` |
-| SenseCV — obstáculo | SenseCV two-head `.keras` | head 1 (obstacle) | `NONE` / `OBSTACLE` |
-| SenseCV — desvio | SenseCV two-head `.keras` | head 2 (deviation) | `LEFT` / `RIGHT` / `NONE` |
+| SenseCV — obstáculo | SenseCV `.keras` | obstacle (width-2 output) | `NONE` / `OBSTACLE` |
+| SenseCV — desvio | SenseCV `.keras` | deviation (width-3 output) | `LEFT` / `RIGHT` / `NONE` |
 
 See [[model-architecture]] for the DroNet graph and
 [[dronet-live-classification]] for the sibling numeric panels these maps mirror.
+
+**Single-head models are auto-detected.** Heads are matched purely by output
+width (2 → obstacle, 3 → deviation), so the loaded `.keras` can be the two-head
+model **or** a single-head model — e.g. the MobileNetV1 classifiers from
+[[kaggle-image-datasets]] (`train_mobilenet_datasets.py`), which output one head
+each (obstacle/free-path is width 2, left/right/none is width 3). A single-head
+model fills only its head; the other SenseCV map shows *"modelo de cabeça única —
+cabeça ausente"* and the obstacle/deviation numeric line shows `—`. For the
+labels to line up, those models are trained with a canonical class order
+(`free_path`/`obstacle`, and `left`/`right`/`none`) matching `SENSECV_OBSTACLE_LABELS`
+/ `SENSECV_DEVIATION_LABELS`. `/api/sensemodel-info` reports the detected `heads`
+once the model is loaded.
 
 ## What Grad-CAM computes
 
@@ -46,8 +58,10 @@ in `_activation_cache` (24 entries).
   `GradientTape` yields **one CAM per head**. The last conv is found by
   `_keras_last_conv_layer()` (last layer with a 4D output). Heads are matched by
   output width (2 → obstacle, 3 → deviation), exactly like
-  `_split_head_arrays` in [[api-routes]]. The base image is the raw 0–255
-  RGB model input (no `/255`; the model has the embedded `Rescaling` layer).
+  `_split_head_arrays` in [[api-routes]]; a width missing from the model's outputs
+  yields an `{available:false}` map for that head (single-head support). The base
+  image is the raw 0–255 RGB model input (no `/255`; the model has the embedded
+  `Rescaling` layer).
 - `_cam_to_data_uri(cam, base_bgr)` — min-max normalizes the CAM, applies
   `COLORMAP_JET`, `addWeighted`-blends it 50/50 over the base, PNG-encodes, and
   returns a `data:image/png;base64,…` URI.

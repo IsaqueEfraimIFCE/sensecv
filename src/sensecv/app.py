@@ -78,6 +78,10 @@ CLIP_GROUPS = {}
 # For these we skip vertical-orientation detection and only segment walking.
 WALKING_ONLY = set()
 
+# Synthetic stress-test recordings are useful for development but must not be
+# offered to annotators or included in normal dataset-wide processing.
+EXCLUDED_CLIP_GROUPS = {'SenseCV-Teste-Estresse'}
+
 def _clip_video_file(p):
     video = os.path.join(p, 'video.mp4')
     if os.path.isfile(video):
@@ -196,6 +200,8 @@ def find_clips():
         for display_name, clip_dir, discovered_group in _discover_clip_dirs(root, recursive):
             display = display_name if label is None else f"{label}/{display_name}"
             group = discovered_group if recursive and discovered_group else label or 'Supermercado Telefrango'
+            if group in EXCLUDED_CLIP_GROUPS:
+                continue
             clip_paths[display] = clip_dir
             clip_video_paths[display] = _clip_video_file(clip_dir)
             clip_groups[display] = group
@@ -2173,6 +2179,33 @@ def detect_imu_events(idx, delta=None):
 # most adequate target for training a predictive CNN.
 DEVIATION_CUT_WINDOW = os.environ.get('SENSECV_DEVIATION_CUT_WINDOW', 'decisao')
 
+# Fixed "miolo" margins: by the recording convention nothing relevant happens
+# in the very first or very last seconds (the operator is starting/stopping the
+# capture), so a suggested desvio cut must land inside [margin, duration - margin].
+# Clips shorter than the minimum duration skip the margins entirely (full-clip
+# search, exactly the plain deviation-cut behavior).
+TRIM_CUT_MARGIN_SEC = float(os.environ.get('SENSECV_TRIM_CUT_MARGIN_SEC', '2.0'))
+TRIM_CUT_MIN_DURATION_SEC = float(os.environ.get('SENSECV_TRIM_CUT_MIN_DURATION_SEC', '8.0'))
+
+
+def suggest_trim_cut(idx, margin=None):
+    """The deviation cut, with the desvio search restricted to the margins.
+
+    Same class logic as `suggest_deviation_cut`, but the desvio ~1 s window is
+    only *looked for* inside [margin, duration - margin] (default 2 s each
+    side); an edge event is discarded — never shifted — and the clip falls
+    through the normal chain. Parada (1 s stop-onset window, whole-clip
+    search) and livre (whole clip) are exactly the plain behavior, as are
+    clips shorter than TRIM_CUT_MIN_DURATION_SEC (8 s), which skip the
+    margins entirely.
+    """
+    margin = TRIM_CUT_MARGIN_SEC if margin is None else float(margin)
+    out = dict(suggest_deviation_cut(idx, cut_margin=margin))
+    out.update({'mode': 'trim', 'margin': margin})
+    if out.get('found'):
+        out['trimmed'] = True
+    return out
+
 
 def _step_rhythm(amag, fps):
     """Per-window step-cadence strength along the clip.
@@ -2307,7 +2340,7 @@ def _manifest_row_kind(desvio_cell, pos_cell):
         return ('desvio', 'LEFT')
     if 'LIVRE' in pos:
         return ('livre', 'NONE')
-    if 'PARADA' in pos:
+    if 'PARADA' in pos or 'PARADA' in desvio:
         return ('parada', 'NONE')
     # "SEM DESVIO" with the obstacle centered = walk up to it and stop.
     if 'SEM DESVIO' in desvio:
@@ -2377,7 +2410,7 @@ def _manifest_kind_for_clip(idx):
     return _load_manifest_labels().get(date_key, {}).get(int(cm.group(1)))
 
 
-def _desvio_window_from_signal(idx, side, delta):
+def _desvio_window_from_signal(idx, side, delta, t1_min=None, t1_max=None):
     """Locate a deviation's [T1, T2] directly from the lateral-velocity signal.
 
     Used for manifest-confirmed desvios that the generic threshold detector
@@ -2386,6 +2419,10 @@ def _desvio_window_from_signal(idx, side, delta):
     fixed threshold was tuned on. The manifest already gives the side, so we look
     for the strongest sustained excursion in that known direction (no absolute
     threshold) and frame the out-and-back around it.
+
+    `t1_min`/`t1_max` (trim mode) restrict the *search*: the peak is only taken
+    from samples inside that time range and the onset walk stops at `t1_min`,
+    so T1 lands inside the range instead of being shifted afterwards.
 
     Returns (t1, t2, direction, strength) or None.
     """
@@ -2397,16 +2434,27 @@ def _desvio_window_from_signal(idx, side, delta):
     secs = np.asarray(series['secs'], dtype=np.float64)
     if len(lat) < 3:
         return None
+    allowed = np.ones(len(secs), dtype=bool)
+    if t1_min is not None:
+        allowed &= secs >= t1_min
+    if t1_max is not None:
+        allowed &= secs <= t1_max
+    if not allowed.any():
+        return None
+
+    def _masked_peak(p):
+        return int(np.argmax(np.where(allowed, p, -np.inf)))
+
     # Positive lat_vel = leftward (same convention as detect_imu_events). Orient
     # the signal so a deviation in the manifest's direction reads positive.
     sign = 1.0 if side == 'LEFT' else -1.0
     sig = lat * sign
-    peak_i = int(np.argmax(sig))
+    peak_i = _masked_peak(sig)
     if sig[peak_i] <= 0:
         # No excursion in the expected direction (sensor sign/orientation odd):
         # fall back to the largest lateral excursion either way — the manifest
         # still owns the side, we only need the timing.
-        peak_i = int(np.argmax(np.abs(lat)))
+        peak_i = _masked_peak(np.abs(lat))
         peak_val = float(abs(lat[peak_i]))
         prof = np.abs(lat)
     else:
@@ -2418,7 +2466,7 @@ def _desvio_window_from_signal(idx, side, delta):
     # above 30% of its own height (relative, so it adapts to each collection).
     thr = 0.30 * peak_val
     i0 = peak_i
-    while i0 > 0 and prof[i0 - 1] > thr:
+    while i0 > 0 and prof[i0 - 1] > thr and (t1_min is None or secs[i0 - 1] >= t1_min):
         i0 -= 1
     i1 = peak_i
     while i1 < len(prof) - 1 and prof[i1 + 1] > thr:
@@ -2429,7 +2477,7 @@ def _desvio_window_from_signal(idx, side, delta):
     return t1, t2, direction, strength
 
 
-def suggest_deviation_cut(idx, delta=None, window=None):
+def suggest_deviation_cut(idx, delta=None, window=None, cut_margin=None):
     """Suggested deviation cut from the IMU event windows (PDF §2.2/§2.3).
 
     Picks the strongest `desvio` event from `detect_imu_events` and returns the
@@ -2456,6 +2504,14 @@ def suggest_deviation_cut(idx, delta=None, window=None):
     ground-truth class wins: it picks the cut branch (desvio/parada/livre) and the
     deviation side, instead of the IMU's guess. The IMU is still used for the cut
     *timing* within the chosen class.
+
+    `cut_margin` (trim mode, [[crop-suggestion]] "miolo"): when set, a desvio
+    is only *looked for* inside [cut_margin, duration - cut_margin] — an event
+    whose cut window falls outside is discarded (never shifted), and the
+    manifest signal-recovery search is bounded the same way. Parada and livre
+    are untouched (parada keeps its 1 s stop-onset window over the whole clip;
+    livre keeps the whole clip). Clips shorter than TRIM_CUT_MIN_DURATION_SEC
+    (8 s) ignore the margin entirely and behave exactly like the plain cut.
     """
     window = window or DEVIATION_CUT_WINDOW
     try:
@@ -2464,12 +2520,27 @@ def suggest_deviation_cut(idx, delta=None, window=None):
         return {'found': False, 'mode': 'deviation', 'has_vertical': True,
                 'message': f'IMU indisponivel: {e}'}
     duration_clip = float(result.get('duration_s') or 0.0)
+    if cut_margin is not None and duration_clip < TRIM_CUT_MIN_DURATION_SEC:
+        # Short clip: the miolo margins would eat most of it — fall back to the
+        # plain full-clip behavior.
+        cut_margin = None
     margin = IMU_DEVIATION_EDGE_MARGIN_SEC
 
     mk = _manifest_kind_for_clip(idx)
     mk_type, mk_side = (mk if mk else (None, None))
 
     all_desvios = [e for e in result.get('events', []) if e.get('type') == 'desvio']
+    # Trim-mode margin: only keep desvios whose *cut window* already lies inside
+    # [cut_margin, duration - cut_margin]. Applied to all_desvios so not even
+    # the manifest `relax` path can resurrect an edge event.
+    if cut_margin is not None and duration_clip > 2 * cut_margin:
+        def _window_in_margin(e):
+            w = (e.get('windows') or {}).get(window) \
+                or (e.get('windows') or {}).get('decisao') \
+                or [e.get('t1', 0.0), e.get('t2', duration_clip)]
+            return (float(w[0]) >= cut_margin
+                    and float(w[1]) <= duration_clip - cut_margin)
+        all_desvios = [e for e in all_desvios if _window_in_margin(e)]
     # A deviation never happens at the very start or end of the clip; drop any
     # desvio whose onset/return sits inside the edge margin (only when the clip
     # is long enough that a margin on both sides still leaves a middle).
@@ -2491,7 +2562,12 @@ def suggest_deviation_cut(idx, delta=None, window=None):
             # the lateral-velocity signal in the manifest's known direction.
             if side_override and duration_clip > 0:
                 delta_v = result.get('delta') or IMU_EVENT_DELTA_SEC
-                sig = _desvio_window_from_signal(idx, side_override, delta_v)
+                sig_kwargs = {}
+                if cut_margin is not None and duration_clip > 2 * cut_margin + delta_v:
+                    # Search only where the decisao window [T1-Δ, T1] fits the margins.
+                    sig_kwargs = {'t1_min': cut_margin + delta_v,
+                                  't1_max': duration_clip - cut_margin}
+                sig = _desvio_window_from_signal(idx, side_override, delta_v, **sig_kwargs)
                 if sig is not None:
                     t1, t2, direction, strength = sig
                     windows = _event_windows(t1, t2, delta_v, duration_clip)
@@ -2508,6 +2584,12 @@ def suggest_deviation_cut(idx, delta=None, window=None):
                     direction = {'LEFT': 'esquerda', 'RIGHT': 'direita'}.get(side_override)
                     strength = None
                     msg = 'desvio confirmado pelo manifesto; janela aproximada'
+                if cut_margin is not None and duration_clip > 2 * cut_margin + 0.2:
+                    # Recovered/approximate windows must also respect the margin.
+                    length = min(end - start, duration_clip - 2 * cut_margin)
+                    start = min(max(start, cut_margin),
+                                duration_clip - cut_margin - length)
+                    end = start + length
                 if end - start < 0.2:
                     start = max(0.0, end - 0.2)
                 return {
@@ -2942,13 +3024,19 @@ def _split_head_arrays(preds):
     """Map raw model outputs to (obstacle_array, deviation_array) by output width.
 
     Each returned array is shaped (batch, classes): width 2 -> obstacle
-    (NONE/OBSTACLE), width 3 -> deviation (LEFT/RIGHT/NONE).
+    (NONE/OBSTACLE), width 3 -> deviation (LEFT/RIGHT/NONE). A head is **None**
+    when the model does not expose it, so single-head models (one obstacle OR one
+    deviation output, e.g. the MobileNetV1 datasets trainer) are auto-detected:
+    a width-2-only model fills just obstacle, a width-3-only model just deviation.
+    A single output of any other width is treated as obstacle (best effort).
     """
     if not isinstance(preds, (list, tuple)):
         preds = [preds]
     arrs = [np.atleast_2d(np.asarray(p)) for p in preds]
-    obstacle_arr = next((a for a in arrs if a.shape[-1] == 2), arrs[0])
-    deviation_arr = next((a for a in arrs if a.shape[-1] == 3), arrs[-1])
+    obstacle_arr = next((a for a in arrs if a.shape[-1] == 2), None)
+    deviation_arr = next((a for a in arrs if a.shape[-1] == 3), None)
+    if obstacle_arr is None and deviation_arr is None:
+        obstacle_arr = arrs[0]  # unknown width -> assume obstacle
     return obstacle_arr, deviation_arr
 
 
@@ -2995,10 +3083,6 @@ def sensemodel_frame_classification(idx, time_s, exact=False):
     batch = _sensemodel_preprocess(frame, model)[None, ...]
     preds = model.predict(batch, verbose=0)
     obstacle_arr, deviation_arr = _split_head_arrays(preds)
-    obstacle_vec = obstacle_arr[0].tolist()
-    deviation_vec = deviation_arr[0].tolist()
-    obstacle_label, obstacle_prob = _label_for(obstacle_vec)
-    deviation_label, deviation_prob = _label_for(deviation_vec)
 
     result = {
         'available': True,
@@ -3010,13 +3094,20 @@ def sensemodel_frame_classification(idx, time_s, exact=False):
         'exact': bool(exact),
         'source_fps': round(fps, 4),
         'model': os.path.basename(_sensemodel_runtime['path']),
-        'obstacle_label': obstacle_label,
-        'obstacle_prob': obstacle_prob,
-        'deviation_label': deviation_label,
-        'deviation_prob': deviation_prob,
-        'obstacle_probs': obstacle_vec,
-        'deviation_probs': deviation_vec,
+        # Heads the loaded model exposes; single-head models report just one.
+        'heads': [h for h, a in (('obstacle', obstacle_arr),
+                                 ('deviation', deviation_arr)) if a is not None],
+        'obstacle_label': None, 'obstacle_prob': None, 'obstacle_probs': None,
+        'deviation_label': None, 'deviation_prob': None, 'deviation_probs': None,
     }
+    if obstacle_arr is not None:
+        obstacle_vec = obstacle_arr[0].tolist()
+        result['obstacle_label'], result['obstacle_prob'] = _label_for(obstacle_vec)
+        result['obstacle_probs'] = obstacle_vec
+    if deviation_arr is not None:
+        deviation_vec = deviation_arr[0].tolist()
+        result['deviation_label'], result['deviation_prob'] = _label_for(deviation_vec)
+        result['deviation_probs'] = deviation_vec
     _sensemodel_cache[key] = result
     if len(_sensemodel_cache) > 64:
         _sensemodel_cache.popitem(last=False)
@@ -3132,12 +3223,13 @@ def _sensemodel_activation(frame_bgr):
             outputs = grad_model(x, training=False)
             conv_out = outputs[0]
             preds = outputs[1:]
-            obstacle_t = next((p for p in preds if p.shape[-1] == 2), preds[0])
-            deviation_t = next((p for p in preds if p.shape[-1] == 3), preds[-1])
-            obs_idx = int(tf.argmax(obstacle_t[0]))
-            dev_idx = int(tf.argmax(deviation_t[0]))
-            obs_target = obstacle_t[0, obs_idx]
-            dev_target = deviation_t[0, dev_idx]
+            # Single-head models expose only one of these (None otherwise).
+            obstacle_t = next((p for p in preds if p.shape[-1] == 2), None)
+            deviation_t = next((p for p in preds if p.shape[-1] == 3), None)
+            if obstacle_t is None and deviation_t is None:
+                obstacle_t = preds[0]  # unknown width -> assume obstacle
+            obs_target = obstacle_t[0, int(tf.argmax(obstacle_t[0]))] if obstacle_t is not None else None
+            dev_target = deviation_t[0, int(tf.argmax(deviation_t[0]))] if deviation_t is not None else None
 
         def _cam(target):
             grads = tape.gradient(target, conv_out)
@@ -3145,24 +3237,23 @@ def _sensemodel_activation(frame_bgr):
             cam = tf.reduce_sum(conv_out[0] * weights, axis=-1)
             return tf.nn.relu(cam).numpy()
 
-        obs_cam = _cam(obs_target)
-        dev_cam = _cam(dev_target)
-        del tape
+        absent = {'available': False, 'error': 'modelo de cabeça única — cabeça ausente'}
 
-        obs_vec = obstacle_t[0].numpy().tolist()
-        dev_vec = deviation_t[0].numpy().tolist()
-        obstacle = {
-            'available': True,
-            'label': SENSECV_OBSTACLE_LABELS[obs_idx] if obs_idx < len(SENSECV_OBSTACLE_LABELS) else str(obs_idx),
-            'prob': float(obs_vec[obs_idx]),
-            'image': _cam_to_data_uri(obs_cam, base),
-        }
-        deviation = {
-            'available': True,
-            'label': SENSECV_DEVIATION_LABELS[dev_idx] if dev_idx < len(SENSECV_DEVIATION_LABELS) else str(dev_idx),
-            'prob': float(dev_vec[dev_idx]),
-            'image': _cam_to_data_uri(dev_cam, base),
-        }
+        def _head(tensor, target, labels):
+            if tensor is None:
+                return dict(absent)
+            vec = tensor[0].numpy().tolist()
+            i = int(np.argmax(vec))
+            return {
+                'available': True,
+                'label': labels[i] if i < len(labels) else str(i),
+                'prob': float(vec[i]),
+                'image': _cam_to_data_uri(_cam(target), base),
+            }
+
+        obstacle = _head(obstacle_t, obs_target, SENSECV_OBSTACLE_LABELS)
+        deviation = _head(deviation_t, dev_target, SENSECV_DEVIATION_LABELS)
+        del tape
         return obstacle, deviation
     except Exception as e:
         err = {'available': False, 'error': str(e)}
@@ -4295,16 +4386,31 @@ def api_activation(idx):
     status = 200 if result.get('available') else 503
     return jsonify(result), status
 
+def _model_head_kinds(model):
+    """Heads a loaded keras model exposes, by output width: 2->obstacle, 3->deviation."""
+    kinds = []
+    for out in getattr(model, 'outputs', []) or []:
+        try:
+            w = int(out.shape[-1])
+        except (TypeError, ValueError):
+            w = None
+        kinds.append('deviation' if w == 3 else 'obstacle')
+    return kinds
+
+
 def _sensemodel_info():
     path = _sensemodel_runtime['path']
+    model = _sensemodel_runtime['model']
     return {
         'name': os.path.basename(path),
         'path': path,
         'exists': os.path.isfile(path),
         'is_default': os.path.abspath(path) == os.path.abspath(SENSECV_MODEL_PATH),
         'default_name': os.path.basename(SENSECV_MODEL_PATH),
-        'loaded': _sensemodel_runtime['model'] is not None,
+        'loaded': model is not None,
         'error': _sensemodel_runtime['error'],
+        # Only known once the model is loaded; single-head -> one entry.
+        'heads': _model_head_kinds(model) if model is not None else None,
     }
 
 @app.route('/api/sensemodel-info')
@@ -4469,6 +4575,9 @@ def api_suggest(idx):
         # heuristic. Returns found:false when the IMU finds no desvio, so
         # runAutoSuggest() falls back to walking for those clips.
         return jsonify(_suggestion_with_ssim(idx, suggest_deviation_cut(idx), threshold=threshold, metric=metric))
+    if mode == 'trim':
+        # The deviation cut (~1s window) shifted into the [2s, duration-2s] margins.
+        return jsonify(_suggestion_with_ssim(idx, suggest_trim_cut(idx), threshold=threshold, metric=metric))
     # Only 'walking' remains (the old 'vertical' suggestion was retired).
     return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, 'walking'), threshold=threshold, metric=metric))
 

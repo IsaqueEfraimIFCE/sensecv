@@ -553,6 +553,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <div class="btn-row">
         <button class="btn" id="btn-suggest-walk" data-mode="walking">⬦ Caminhada</button>
         <button class="btn" id="btn-suggest-lateral" data-mode="lateral">⬦ Desvio lateral</button>
+        <button class="btn" id="btn-suggest-trim" data-mode="trim">⬦ Miolo 2s</button>
       </div>
       <div class="cut-type hidden" id="cut-type-disp"></div>
       <div class="form-row">
@@ -1335,8 +1336,10 @@ function renderSensemodel(d){
     status.textContent = d.error || 'SenseCV indisponível';
     return;
   }
-  document.getElementById('sm-obstacle').textContent = `${d.obstacle_label} ${d.obstacle_prob.toFixed(3)}`;
-  document.getElementById('sm-deviation').textContent = `${d.deviation_label} ${d.deviation_prob.toFixed(3)}`;
+  // Single-head models report only one head; the other comes back null.
+  const fmtHead = (label, prob) => (label == null ? '—' : `${label} ${prob.toFixed(3)}`);
+  document.getElementById('sm-obstacle').textContent = fmtHead(d.obstacle_label, d.obstacle_prob);
+  document.getElementById('sm-deviation').textContent = fmtHead(d.deviation_label, d.deviation_prob);
   document.getElementById('sm-obstacle-box').classList.toggle('warn', d.obstacle_label === 'OBSTACLE');
   if(d.model) document.getElementById('sm-model-name').textContent = d.model;
   status.className = 'dronet-status ok';
@@ -1637,29 +1640,35 @@ function showVerticalWarning(show, msg){
 const SUGGEST_LABELS={
   walking:'⬦ Caminhada',
   lateral:'⬦ Desvio lateral',
+  trim:'⬦ Miolo 2s',
 };
 const SUGGEST_BTN_IDS={
   walking:'btn-suggest-walk',
   lateral:'btn-suggest-lateral',
+  trim:'btn-suggest-trim',
 };
 const SUGGEST_TAGS={
   walking:'caminhada',
   lateral:'desvio lateral',
+  trim:'miolo 2s',
 };
 
 // Resolve a suggested cut to a (data-type, human label) pair. The IMU
 // deviation cut carries event_type: desvio | parada | livre; the walking
 // suggestion has none.
 function cutTypeInfo(d, mode){
+  // Trim mode reuses the deviation cut but shifts it into the fixed margins;
+  // tag the resolved type so the operator knows the window may have moved.
+  const trim = d.trimmed ? ` · miolo ${d.margin ?? 2}s` : '';
   if(d.event_type==='desvio'){
     const dir = d.side==='LEFT' ? 'esquerda' : d.side==='RIGHT' ? 'direita' : '';
-    return {type:'desvio', label:'Desvio lateral' + (dir ? ` (${dir})` : '')};
+    return {type:'desvio', label:'Desvio lateral' + (dir ? ` (${dir})` : '') + trim};
   }
   if(d.event_type==='parada')
-    return {type:'parada', label:`Parada @ ${fmtTime(d.stop_time)}`};
+    return {type:'parada', label:`Parada @ ${fmtTime(d.stop_time)}${trim}`};
   if(d.event_type==='livre')
-    return {type:'livre', label:'Caminhada livre'};
-  return {type:'caminhada', label:'Caminhada'};
+    return {type:'livre', label:'Caminhada livre' + trim};
+  return {type:'caminhada', label:'Caminhada' + trim};
 }
 function cutTypeLabel(d, mode){ return cutTypeInfo(d, mode).label; }
 function showCutType(d, mode){
@@ -1946,7 +1955,9 @@ async function runSuggest(mode, opts={}){
 
 async function runAutoSuggest(){
   const reqIdx = currentIdx;
-  for (const mode of ['lateral', 'walking']) {
+  // 'trim' is the deviation cut with the miolo margins (desvio only inside
+  // [2s, dur-2s] on clips >= 8s); it falls back to walking like lateral did.
+  for (const mode of ['trim', 'walking']) {
     const found = await runSuggest(mode, {auto:true});
     if (reqIdx !== currentIdx || found) return;
   }
@@ -1954,6 +1965,7 @@ async function runAutoSuggest(){
 
 document.getElementById('btn-suggest-walk').addEventListener('click',()=>runSuggest('walking'));
 document.getElementById('btn-suggest-lateral').addEventListener('click',()=>runSuggest('lateral'));
+document.getElementById('btn-suggest-trim').addEventListener('click',()=>runSuggest('trim'));
 document.getElementById('btn-ssim-refresh').addEventListener('click',()=>loadSsimVisualizer());
 document.getElementById('ssim-metric').addEventListener('change',()=>applyMetricChange());
 document.getElementById('btn-imu-events').addEventListener('click',()=>loadImuEvents());

@@ -2,7 +2,7 @@
 type: concept
 tags: [algorithm, workflow]
 code_refs: [app.py, templates/index.html]
-updated: 2026-06-19
+updated: 2026-07-03
 ---
 
 # Crop suggestion
@@ -11,11 +11,12 @@ updated: 2026-06-19
 a clip so the operator rarely sets markers by hand. Exposed at
 `/api/suggest/<idx>?mode=` ([[api-routes]]).
 
-## Two modes
+## Three modes
 | mode | mask used | intent |
 |---|---|---|
 | `walking` (auto) | exported history first; otherwise `vertical AND walking` ([[walking-detection]]) | walking-only crop that matches known exports and falls back to detector logic for new clips |
 | `lateral` | IMU deviation event (PDF, see below) | the deviation cut from `suggest_deviation_cut` — `decisao` window `[T1-Δ, T1]` by default |
+| `trim` (2026-07-03) | IMU deviation cut, desvio search bounded | `suggest_trim_cut`: desvio (~1 s) searched only inside `[2s, duration-2s]` on clips ≥ 8 s; everything else = plain behavior (see below) |
 
 > **Retired (2026-06-19):** the old `vertical` mode (first sustained portrait
 > period, via `_first_sustained` on the orientation mask) was removed along with
@@ -185,6 +186,44 @@ The export/validation surfaces inherit this through the shared return shape:
 deviation validation video stays desvio-only — `livre` and `parada` (both
 `side: 'NONE'`) are filtered out of it.
 
+## Margin-bounded cut (`suggest_trim_cut`, mode `trim`)
+Added 2026-07-03: same logic as `suggest_deviation_cut`, with one added rule
+for desvio. The rationale is the recording convention: the operator is
+starting/stopping the capture in the first and last moments, so a desvio cut
+never sits in those edges ("miolo").
+
+- **desvio**: the ~1 s window is only *looked for* inside
+  `[margin, duration - margin]` (default 2 s each side). An event whose cut
+  window falls outside is **discarded, never shifted**; the clip then falls
+  through the normal fallback chain. The manifest signal-recovery search
+  (`_desvio_window_from_signal`) is bounded the same way — its new
+  `t1_min`/`t1_max` params mask the peak search and stop the onset walk, so a
+  recovered T1 genuinely lands inside the margins (real in-margin timings, not
+  boundary-clamped clones).
+- **Short clips are exempt**: any clip under `TRIM_CUT_MIN_DURATION_SEC`
+  (default **8 s**, env-overridable) skips the margins entirely and returns
+  exactly the plain deviation cut (full-clip search).
+- **parada and livre are untouched** in every case: parada keeps its 1 s
+  stop-onset window with the whole clip searched; livre keeps the whole clip.
+
+Implementation: `suggest_trim_cut(idx, margin=None)` is a thin wrapper over
+`suggest_deviation_cut(idx, cut_margin=margin)` (the new `cut_margin` param
+carries all the behavior above; it self-disables for short clips); the wrapper
+retags `mode:'trim'` and adds `trimmed:true` + `margin` to the response, which
+otherwise keeps the deviation cut's own payload (`event_type`, `side`,
+`t1/t2`, …). The margin is `SENSECV_TRIM_CUT_MARGIN_SEC` (default **2.0 s**)
+per side. Exposed at `/api/suggest/<idx>?mode=trim` ([[api-routes]]) with the
+same SSIM frame-selection wrapper as the other modes, and in
+[[viewer-frontend]] as the "⬦ Miolo 2s" button; the cut-type chip shows the
+resolved class with a `· miolo 2s` suffix. Since 2026-07-03 it is also the
+**default on-load suggestion**: `runAutoSuggest()` tries `trim` then
+`walking`; the "⬦ Desvio lateral" button remains the unbounded cut.
+
+Verified sample (398-clip root, first 150): the 30 clips under 8 s return
+windows identical to the plain cut; the parada clip keeps `17.967–18.967`;
+long-clip desvios show 0 margin violations (2 edge desvios re-detected
+in-margin).
+
 ## Horizontal (walking-only) clips
 Clips from the extra input roots (the `SenseCV-*` folders, tracked in
 `app.py` `WALKING_ONLY`) are filmed **horizontally the whole time**, so
@@ -245,16 +284,17 @@ the UI can show how many source frames were in the cut and how many distinct
 images remain for dataset composition.
 
 ## UI integration ([[viewer-frontend]])
-- Auto-suggest: `loadClip()` calls `runAutoSuggest()`, which tries `lateral`
-  first, then `walking`. The user preference is to start with the desvio-lateral
-  cut and use walking only as a fallback. Since `lateral` is the PDF cut with its
-  desvio → parada → **livre** fallback chain, it now returns `found:true` for any
-  clip that contains walking (desvio cut, stop-onset cut, or whole-walk free
-  cut), so auto-suggest almost always settles on `lateral`; it only falls through
-  to `walking` when the clip has no usable walking at all. The toast tags the
-  result `caminhada livre` when `event_type==='livre'`.
-- Two buttons ("⬦ Caminhada", "⬦ Desvio lateral") re-run on demand through one
-  `runSuggest(mode)` with a stale-request guard, under the **Anotar** tab.
+- Auto-suggest: `loadClip()` calls `runAutoSuggest()`, which tries `trim`
+  first (2026-07-03; previously `lateral`), then `walking`. The user preference
+  is to start with the deviation cut *with the miolo margins applied* and use
+  walking only as a fallback. Since `trim` keeps the PDF cut's
+  desvio → parada → **livre** fallback chain, it returns `found:true` for any
+  clip that contains walking, so auto-suggest almost always settles on `trim`;
+  it only falls through to `walking` when the clip has no usable walking at
+  all. The toast tags the result `caminhada livre` when `event_type==='livre'`.
+- Three buttons ("⬦ Caminhada", "⬦ Desvio lateral", "⬦ Miolo 2s") re-run on
+  demand through one `runSuggest(mode)` with a stale-request guard, under the
+  **Anotar** tab.
 - **Cut-type badge** (`#cut-type-disp`): after every suggest cut (auto or
   button), a persistent "Tipo de corte:" chip under the suggest buttons shows
   the resolved class — `Desvio lateral (esquerda/direita)`, `Parada @ <t>`,

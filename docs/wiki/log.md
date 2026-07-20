@@ -5,6 +5,177 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-07-14] improve | DINO MobileNet fine-tuning strategy sweep
+- `scripts/train_mobilenet_dino.py` now compares three reproducible recipes on
+  one clip-grouped split: the original full-network baseline, conservative
+  last-30-layer tuning with frozen BatchNorm, and last-45-layer AdamW tuning
+  with class+clip-balanced weights. Strong trials use label-safe crop/color
+  augmentation and still never horizontally flip left/right labels.
+- Fixed best-model handling: the global best validation-loss checkpoint is
+  reloaded after both phases instead of being overwritten by the final epoch.
+  Validation/test weights are now 1 regardless of train weighting.
+- Each trial writes its own model/report/history with validation and test
+  macro-F1/balanced accuracy. The deployable model is promoted strictly by
+  validation macro-F1; day-22 test results are not used for selection.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-03] feature | margin-bounded "trim" cut mode (2s from each end)
+- New way of choosing cuts, requested by the operator (refined thrice
+  in-session: whole-middle `[2s, dur-2s]` → clamp-shifted → search-bounded →
+  final +8 s exemption/parada revert): **desvio** cuts (~1 s, same PDF window)
+  are only *looked for* inside `[2s, duration-2s]` — edge events are
+  discarded, never shifted. **Clips under 8 s** (`TRIM_CUT_MIN_DURATION_SEC`,
+  env-overridable) skip the margins and return exactly the plain deviation
+  cut; **parada** (1 s stop-onset window, full-clip search) and **livre**
+  (whole clip) are untouched in every case.
+- `app.py`: `suggest_deviation_cut` gains `cut_margin=None` (filters desvio
+  events by their cut window, bounds the manifest signal recovery via new
+  `t1_min`/`t1_max` params on `_desvio_window_from_signal`, self-disables
+  under 8 s); `suggest_trim_cut(idx, margin=None)` is a thin wrapper adding
+  `mode:'trim'`, `trimmed:true`, `margin`. Margin env
+  `SENSECV_TRIM_CUT_MARGIN_SEC` (default 2.0 s/side).
+- Exposed at `/api/suggest/<idx>?mode=trim` (same SSIM wrapper) and as a third
+  viewer button "⬦ Miolo 2s"; the cut-type chip shows the resolved class with
+  a `· miolo 2s` suffix. After the operator hit a pre-margin cut on clip
+  viewer-284/idx-283 (on-load auto-suggest still used `lateral`),
+  `runAutoSuggest()` now tries **trim → walking**, so the margins are the
+  default; the "⬦ Desvio lateral" button keeps the unbounded cut.
+- Verified live (150 of 398 clips): 30 sub-8 s clips identical to the plain
+  cut; parada keeps 17.967–18.967; long-clip desvios 0 margin violations
+  (2 edge desvios re-detected in-margin).
+- Pages touched: [[crop-suggestion]], [[api-routes]], [[viewer-frontend]].
+
+## [2026-07-01] add | test-set prediction dump script for the trained models
+- `scripts/predict_test_frames.py`: standalone Kaggle companion run after any
+  of the trainers. Rebuilds the day-`--test-day` test set from labels.csv,
+  loads each `<models-root>/<dataset>/model.keras`, predicts all test frames
+  and writes `--out/<dataset>/`: images copied into one folder per PREDICTED
+  label (`ok__<name>` when correct, `true-<label>__<name>` when wrong),
+  `predictions.csv` with per-class probabilities, and `summary.json`
+  (accuracy, per-true-label recall + predicted_as). Class order from the
+  model dir's report.json (canonical fallback).
+- Defaults target the _dino datasets + models_dino; `--datasets ""` sweeps
+  every dataset that has a model. Compile-checked only (TF is Kaggle-side).
+- Pages touched: [[kaggle-image-datasets]], [[index]].
+
+## [2026-07-01] change | train_mobilenet_dino.py now builds its own datasets
+- The DINO trainer is now a one-file build+train pipeline over the uploaded
+  **all-frames 224 image datasets** (`--input` default
+  `/kaggle/input/datasets/isaqueefraim/dataset8/kaggle_allframes_datasets_224`):
+  no video decoding — it groups `obstacle_freepath/labels.csv` by physical
+  frame sequence (filename base before `__fNNNNN.jpg`), runs `Dinov2Selector`
+  per sequence, and copies the kept frames into `obstacle_freepath_dino` +
+  `deviation_lrn_dino` (both schemes matched by filename, all columns incl.
+  `source`/`segment` preserved) before training at img_size 224.
+- Build auto-skips when both `labels.csv` exist; `--rebuild` forces it,
+  `--no-build` restores the old train-only behaviour. New flags: `--input`,
+  `--dino-threshold`, `--dino-max-per-clip`, `--limit`.
+- Verified locally on 5 clear sequences of the local 224 build: 17/94 frames
+  kept, both schemes + labels.csv/dataset_info.json written; the trainer half
+  is unchanged (TF not installed locally, exercised on Kaggle).
+- Pages touched: [[kaggle-image-datasets]], [[index]].
+
+## [2026-07-01] add | standalone trainer for the all-frames 224 dataset
+- `scripts/train_mobilenet_allframes.py`: paste-friendly standalone copy of the
+  MobileNetV1 trainer (like `train_mobilenet_dino.py`) defaulted to the
+  uploaded all-frames dataset (`obstacle_freepath,deviation_lrn` straight from
+  /kaggle/input), img_size 224, out `models_allframes/`. Report/print gain a
+  `test_frames_by_source` breakdown (cuts vs clear on the test day).
+- Split dry-run on the local 224 build: obstacle scheme trains 17 952 / val
+  3 739 / test 3 156 frames over 308/55/91 clips; test = 1 416 cuts + 1 740
+  clear frames. Deviation scheme test: left 850 / right 566 / none 1 740.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-01] change | all-frames dataset rebuilt at 224x224
+- `make_kaggle_allframes_dataset.py` gained `--img-size` (default 224, 0 =
+  native 720x720); frames are resized with INTER_AREA on write.
+- Rebuild at `data/derived/kaggle_allframes_datasets_224/`: same 893 clips /
+  24 847 images per scheme, now 224x224x3, ~0.9 GB (was ~6 GB native). The
+  old native-resolution `kaggle_allframes_datasets/` was deleted.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-01] fix | day-22 test split was missing most of its clips
+- Reported: the trainer's day-22 test set only saw a scattered subset of the
+  day-22 clips. Root causes were in the DATASET, not the trainer: (1) 136 of
+  396 `datasetcortado-andre` cut folders (incl. 23 of the 33 day-22 clips)
+  have no per-folder `cut_info.json` — their labels live only in the root
+  `sources.csv` — so the builder dropped them; (2) the `test-clear` clips are
+  the day-22 free-path recordings but their `NN_sem_obstaculos` names carry no
+  date, so the trainer's `DD-MM-YYYY` parser routed them to train/val.
+- `make_kaggle_allframes_dataset.py`: cut folders now fall back to the root
+  `sources.csv` ledger for labels; new `--clear-date` (default `22-06-2026`)
+  prefixes `SenseCV-<date>-clear_` onto clear `source_clip`s.
+- Rebuild: 893 clips (396+439+58, 0 skipped), 24 847 images per scheme; the
+  day-22 test split is now 91 clips / 3 156 frames with both classes
+  (obs 1 416 / free 1 740; left 850 / right 566 / none 1 740).
+- Remaining gap: `dataset_endpoints` predates the day-22 uploads (0 day-22
+  folders) — rebuild via `make_dataset_endpoints.py` if day-22 endpoint frames
+  are wanted.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-01] feature | combined all-frames Kaggle dataset from three sources
+- `scripts/make_kaggle_allframes_dataset.py`: self-contained builder merging
+  every frame from (1) the labelled `datasetcortado-andre` deviation cuts,
+  (2) the `dataset_endpoints` head/tail 0.5 s cuts, and (3) the `test-clear`
+  `sem_obstaculos` clips into the two single-head schemes
+  (`obstacle_freepath`, `deviation_lrn`). Endpoints/clear frames are labelled
+  `free_path`/`none`; `labels.csv` gains `source` + `segment` columns;
+  `source_clip` strips `_head`/`_tail` so clip-grouped splits don't leak.
+- Two build fixes found on the first run: the endpoints root's
+  `review_all_frames.mp4` montage was being ingested as 11 710 bogus free_path
+  frames (root-level `review*.mp4` now excluded), and the one endpoints folder
+  missing `cut_info.json` was silently dropped (segment now inferred from the
+  folder suffix).
+- Build @ `data/derived/kaggle_allframes_datasets/`: 757 clips (260+439+58),
+  136 unlabelled cut folders ledgered in `skipped.json`; 18 905 images per
+  scheme (obs: 11 687 free_path / 7 218 obstacle; dev: 12 390/3 609/2 906),
+  ~4.9 GB.
+- Pages touched: [[kaggle-image-datasets]], [[index]].
+
+## [2026-06-28] add | dedicated MobileNet-on-DINOv2-datasets trainer + preprocessing fix
+- `scripts/train_mobilenet_dino.py`: standalone (self-contained, paste-friendly)
+  copy of the trainer defaulting `--datasets` to
+  `obstacle_freepath_dino,deviation_lrn_dino` and `--out-root` to `models_dino/`.
+- `train_mobilenet_datasets.py`: **fixed input contract** so the saved `.keras`
+  works in the live viewer — moved normalisation INTO the model
+  (`Rescaling(1/127.5,-1)` first layer) and feed raw 0-255 in the data pipeline,
+  matching `app.py _sensemodel_preprocess` (which feeds raw 0-255). Models trained
+  before this fix must be retrained.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-06-28] feature | single-head .keras models in the live viewer + activation maps
+- The live inference (`sensemodel_frame_classification`) and Grad-CAM
+  (`_sensemodel_activation`) paths now **auto-detect single-head models**: heads
+  are matched by output width (2=obstacle, 3=deviation) and a head the model does
+  not expose comes back `None`/`{available:false}` instead of being faked from the
+  wrong output. `_split_head_arrays` returns `None` for an absent head.
+- `_sensemodel_info()` / `/api/sensemodel-info` now report the detected `heads`
+  list once a model is loaded; `sensemodel_frame_classification` adds `heads` and
+  nulls the absent head's label/prob/probs.
+- Frontend `renderSensemodel` guards the null head (`—`); the activation panel
+  already degraded per-map, so it shows "cabeça ausente" for the missing head.
+- `train_mobilenet_datasets.py` now emits a **canonical class order**
+  (`free_path,obstacle` and `left,right,none`) so a single-head model's argmax
+  lines up with `SENSECV_OBSTACLE_LABELS` / `SENSECV_DEVIATION_LABELS`.
+- Pages touched: [[activation-maps]], [[kaggle-image-datasets]]. Relates to
+  [[dronet-live-classification]], [[api-routes]].
+
+## [2026-06-28] feature | self-contained Kaggle single-head datasets + MobileNetV1 trainer
+- `scripts/make_kaggle_image_datasets.py`: builds four ImageFolder datasets
+  (`obstacle_freepath`, `deviation_lrn`, + `_dino` variants) straight from the
+  `datasetcortado/deviation` cut folders — only `cut_info.json` + the trimmed
+  `<clip>.mp4`, no `sensecv.app`/IMU. DINOv2 ViT-S/14 cosine dedup (thr 0.98) for
+  the `_dino` sets. First real build: 259 clips → 10613 + 1670 images each scheme.
+- `scripts/train_mobilenet_datasets.py`: MobileNetV1 α=0.5 @128 ImageNet trainer,
+  one model per dataset. Clip-grouped split (no frame leakage), **test = day 22**
+  (`--test-day`), stratified train/val over the rest, inverse-freq class weights,
+  horizontal-flip auto-disabled for the left/right deviation set. Two-phase
+  warmup + fine-tune, writes confusion matrix / per-class F1 / history.
+- Both notebook-friendly (top-of-file `CONFIG`, `parse_known_args`).
+- Pages touched: [[kaggle-image-datasets]] (new), [[index]]. Relates to
+  [[kaggle-two-head-dataset]], [[clear-dataset]], [[classification-taxonomy]],
+  [[crop-suggestion]]. Page count: 40.
+
 ## [2026-06-25] refine | tighten stop and free-walk criteria
 - **Stop cut** now requires a *confirmed* halt: the standstill must be preceded
   by walking, **not walked out of**, and last `≥ SENSECV_IMU_STOP_CONFIRM_SEC`
@@ -738,4 +909,3 @@ Append-only. One entry per operation. Greppable prefix:
 - Open questions filed: whether [[walking-detection]] should use fused `speed`
   from [[velocity-estimation]]; frame-exact vs keyframe-copy cut tradeoff in
   [[export-pipeline]].
-

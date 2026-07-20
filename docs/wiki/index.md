@@ -36,6 +36,7 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[dronet-sensecv-02062026-3fps]] | DroNet 3 FPS frame classifications and contact sheets for the 02-06-2026 SenseCV gimbal root | `run_sensecv_02062026_dronet_3fps.py` |
 | [[dronet-live-classification]] | Live Flask/API DroNet inference shown in the viewer at paused frames or 3 FPS during playback | `app.py`, `templates/index.html` |
 | [[kaggle-two-head-dataset]] | Kaggle obstacle/deviation two-head image dataset built from manifest-export lateral cuts plus the clear set | `scripts/make_kaggle_two_head_dataset.py` |
+| [[kaggle-image-datasets]] | Self-contained single-head Kaggle datasets (obstacle/free-path + left/right/none, plus DINOv2-selected variants) from the `deviation` cuts, a combined all-frames variant merging cuts + endpoints + clear, a MobileNetV1 α=0.5 @128 trainer (clip-grouped split, test=day 22), a one-file DINO build+train pipeline, and a post-training test-set prediction dump | `scripts/make_kaggle_image_datasets.py`, `scripts/make_kaggle_allframes_dataset.py`, `scripts/train_mobilenet_datasets.py`, `scripts/train_mobilenet_dino.py`, `scripts/predict_test_frames.py` |
 
 ## Concepts
 | Page | Summary | Code |
@@ -60,4 +61,4 @@ Catalog of every page. Start at [[overview]]. Maintenance rules in
 | [[imu-event-labeling]] | IMU capture validation, T1/T2 event detection, and decision-window labeling from the criterios PDF | `app.py`, `scripts/imu_event_report.py` |
 
 ## Page count
-- Meta: 6; Entities: 15; Concepts: 18 -> **39 pages**
+- Meta: 6; Entities: 16; Concepts: 18 -> **40 pages**

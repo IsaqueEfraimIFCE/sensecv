@@ -2,7 +2,7 @@
 type: entity
 tags: [frontend, html, chartjs]
 code_refs: [templates/index.html]
-updated: 2026-06-19
+updated: 2026-07-03
 ---
 
 # templates/index.html - Viewer and annotator UI
@@ -74,10 +74,10 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
   when the tab is active** because each call runs two backprops. See
   [[activation-maps]].
 - **Auto-suggested crop** - on `loadClip()`, `runAutoSuggest()` tries
-  `lateral`, then `walking` (the retired `vertical` mode is no longer attempted).
-  Lateral-deviation cuts are the first choice; walking is the fallback. A red
-  banner appears if a vertical-dependent response reports no vertical moment.
-  See [[crop-suggestion]].
+  `trim` (2026-07-03; the deviation cut with the miolo margins — previously
+  `lateral`), then `walking` (the retired `vertical` mode is no longer
+  attempted). A red banner appears if a vertical-dependent response reports no
+  vertical moment. See [[crop-suggestion]].
 - **Frame-selection visualizer** - lives in its **own `Frames` tab** (split out
   of `Anotar`), so the selected frames can be reviewed large. After an automatic
   or manual crop window, the panel loads `/api/ssim/<idx>` and renders the
@@ -91,9 +91,13 @@ actual `<folder>.mp4` file rather than assuming `video.mp4`.
   `metric` + `threshold`. Clicking a frame seeks the video to that retained
   source frame. `Anotar` keeps an **"Escolha de frames →"** button that switches
   to this tab; entering it re-runs `loadSsimVisualizer()` for the current crop.
-- **Suggest buttons** - "⬦ Caminhada" (`walking`) and "⬦ Desvio lateral"
-  (`lateral`), routed through `runSuggest(mode)` with a stale-request guard. The
-  old "Vertical" button and `vertical` mode were retired (see [[crop-suggestion]]).
+- **Suggest buttons** - "⬦ Caminhada" (`walking`), "⬦ Desvio lateral"
+  (`lateral`), and "⬦ Miolo 2s" (`trim`, 2026-07-03: desvio searched only inside
+  `[2s, duration-2s]` on clips ≥ 8 s, everything else as the plain cut; the
+  cut-type chip gains a `· miolo 2s` suffix), routed through `runSuggest(mode)`
+  with a stale-request guard.
+  The old "Vertical" button and `vertical` mode were retired (see
+  [[crop-suggestion]]).
 - **Eventos IMU panel** - a Δ selector (0.5/1.0/1.5 s) and "Detectar" button
   call `/api/imu-events/<idx>` and list the capture verdict plus each detected
   desvio/redução/parada with T1/T2, direction, and confidence. Each event has
