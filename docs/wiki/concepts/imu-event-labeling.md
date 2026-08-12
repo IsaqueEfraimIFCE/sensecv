@@ -2,7 +2,7 @@
 type: concept
 tags: [imu, labeling, events, sensor, methodology]
 code_refs: [src/sensecv/app.py, scripts/imu_event_report.py]
-updated: 2026-06-18
+updated: 2026-07-28
 ---
 
 # IMU event labeling (criterios PDF)
@@ -50,12 +50,12 @@ Verdict: `aceitar` (all pass), `baixa_confianca` (minor fails), `rejeitar`
 - **reducao** — walking energy persistently below 60% of its rolling 3 s
   baseline without reaching standstill.
 - **parada** — gait energy below 0.25 m/s² for ≥ 1 s (`SENSECV_IMU_STOP_MIN_SEC`).
-  A separate **confirmed stop-onset detector** (`detect_stop_onset`, used only as
-  the no-desvio deviation-cut fallback, see below) returns the onset of a
-  standstill that is **preceded by walking, not walked out of, and lasts
-  `≥ SENSECV_IMU_STOP_CONFIRM_SEC` (0.8 s)** — a genuine halt the person stays in,
-  not a brief mid-walk pause. On gimbal captures that end mid-stride this fires on
-  **no** clip (0/389), because the recording stops before a standstill settles.
+  A separate stop-onset detector (`detect_stop_onset`, used only as the
+  no-desvio deviation-cut fallback) locates where periodic stepping disappears
+  near the end of the clip. It requires earlier stepping and rejects a clip
+  whose final cadence window still contains steps. The declared
+  `IMU_STOP_ONSET_MIN_SEC` and `IMU_STOP_CONFIRM_SEC` constants are not
+  referenced by this current detector.
 
 ## Label windows (PDF sections 2.2 / 4)
 
@@ -82,10 +82,9 @@ deviation each): **26/32 correct directions, 3 misses, 3 wrong** — and 2 of
 the 3 wrong are flagged `baixa`. The yaw path is untested on this dataset
 because the gimbal suppresses rotation (max ≈ 11 °/s); lateral velocity was
 chosen automatically for all 32. No **`parada` events** are detected because
-recording stops while the person is still mid-stride — the captures never record
-a settled standstill, so even the confirmed `detect_stop_onset` fallback fires on
-no clip (0/389). Such clips resolve to a `desvio` cut or, lacking one, a
-free-walk cut when they contain a sustained walking run.
+recording stops while the person is still mid-stride. A historical scan
+recorded no `detect_stop_onset` fallback in 389 clips. Such counts must be
+recomputed after detector or source-data changes.
 
 ## Surfaces
 
@@ -93,13 +92,14 @@ free-walk cut when they contain a sustained walking run.
   into the suggested deviation cut (the `decisao` window by default,
   `SENSECV_DEVIATION_CUT_WINDOW`). When there is **no desvio**, it falls back to
   `detect_stop_onset(idx)` and cuts the same label window around the stop start
-  T1 (`event_type:'parada'`, `stop_time`) — but only for a **confirmed** halt
-  (preceded by walking, not walked out of, `≥ IMU_STOP_CONFIRM_SEC`). With
-  **neither desvio nor confirmed parada** the clip is a **free walk** when it has
-  a **long continuous walking run** (`≥ IMU_FREE_WALK_MIN_SEC`, 3 s):
-  `detect_free_walk_span(idx)` returns the whole usable walking span
-  (`event_type:'livre'`, `side:'NONE'`). A clip with no sustained walk yields
-  `found:false`. This is what the deviation export +
+  T1 (`event_type:'parada'`, `stop_time`) when the step-periodicity detector
+  finds cadence earlier and its disappearance near the clip end. With
+  **neither desvio nor parada**, `detect_free_walk_span(idx)` qualifies a
+  **free walk** when at least one cadence window has detectable periodicity;
+  the current `_livre_cut()` returns the whole video `[0, duration]`
+  (`event_type:'livre'`, `side:'NONE'`). A clip with no discernible gait yields
+  `found:false`. This is
+  what the deviation export +
   validation video feed on (`/api/inspect-deviation`, `export_set(mode='deviation')`);
   `export_deviation_set` filters to `side ∈ {LEFT, RIGHT}`, so `livre`/`parada`
   stay out of the desvio validation video. See [[crop-suggestion]].
@@ -112,3 +112,23 @@ free-walk cut when they contain a sustained walking run.
 
 Section 9 of the PDF (similarity-based frame cuts instead of fixed FPS) is the
 metric frame selection documented in [[clear-dataset]] and `/api/ssim`.
+
+## Method references
+
+The thresholds in `app.py` are empirical SenseCV calibration parameters; the
+following primary studies support the signal-processing choices rather than
+prescribing those numerical values:
+
+- [Manos, Klein, and Hazan (2019)](https://doi.org/10.3390/s19051170):
+  gravity-aligned decomposition and projection of gyroscope measurements onto
+  the vertical direction for pedestrian heading.
+- [Moe-Nilssen and Helbostad (2004)](https://doi.org/10.1016/S0021-9290(03)00233-1):
+  gait cadence, regularity, and symmetry estimated from trunk acceleration and
+  autocorrelation.
+- [Park and Suh (2010)](https://doi.org/10.3390/s101009163): inertial
+  zero-velocity interval detection. SenseCV uses a simpler rolling-energy
+  threshold, not their hidden Markov model.
+- [Munoz Diaz, Caamano, and Fuentes-Sanchez (2017)](https://doi.org/10.3390/s17071555):
+  the accumulation of drift in MEMS pedestrian inertial navigation. SenseCV
+  removes a local rolling mean from integrated lateral acceleration rather
+  than applying their landmark-based correction.

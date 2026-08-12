@@ -525,10 +525,19 @@ def get_clip_data(idx):
     av = np.array([[a['x'],a['y'],a['z']] for a in acc_data])
     rt = np.array([r['time_usec'] for r in rot_data], dtype=np.float64)
     rv = np.array([[r['x'],r['y'],r['z']] for r in rot_data])
+    magnetometer_path = os.path.join(folder, 'magnetometer.json')
+    magnetometer = None
+    if os.path.isfile(magnetometer_path):
+        mag_data = load_json(folder, 'magnetometer.json').get('magnetometer', [])
+        if len(mag_data) >= 2:
+            mt = np.array([m['time_usec'] for m in mag_data], dtype=np.float64)
+            mv = np.array([[m['x'],m['y'],m['z']] for m in mag_data])
+            magnetometer = interp_at_times(mt, mv, ft)
     t0=float(ft[0]); secs=[(float(f)-t0)/1e6 for f in ft]
     fps=float(1e6/np.median(np.diff(ft)))
     data={'fps':round(fps,3),'duration':secs[-1],'times':secs,
           'accel':interp_at_times(at,av,ft),'rotation':interp_at_times(rt,rv,ft),
+          'magnetometer':magnetometer,
           'velocity':compute_velocities(acc_data,rot_data,ft.tolist()),
           'external_input':external_input_at_times(folder, ft),
           'name':key,'index':idx,'total':len(CLIPS),
@@ -653,6 +662,17 @@ def save_sensor_data(clip_idx, start_sec, end_sec, export_folder):
         {**r, 'time_usec': int(rebase(r['time_usec']))}
         for r in rot_raw['rotations'] if t_start <= r['time_usec'] <= t_end
     ]
+    magnetometer_raw = None
+    magnetometer_path = os.path.join(folder, 'magnetometer.json')
+    if os.path.isfile(magnetometer_path):
+        magnetometer_raw = load_json(folder, 'magnetometer.json')
+    filtered_magnetometer = []
+    if magnetometer_raw:
+        filtered_magnetometer = [
+            {**m, 'time_usec': int(rebase(m['time_usec']))}
+            for m in magnetometer_raw.get('magnetometer', [])
+            if t_start <= m.get('time_usec', -1) <= t_end
+        ]
     external_raw = None
     external_path = os.path.join(folder, 'external_sensors.json')
     if os.path.isfile(external_path):
@@ -670,6 +690,9 @@ def save_sensor_data(clip_idx, start_sec, end_sec, export_folder):
         json.dump({'accelerations': filtered_acc}, f)
     with open(os.path.join(export_folder,'rotations.json'),'w') as f:
         json.dump({'rotations': filtered_rot}, f)
+    if magnetometer_raw is not None:
+        with open(os.path.join(export_folder,'magnetometer.json'),'w') as f:
+            json.dump({'magnetometer': filtered_magnetometer}, f)
     if external_raw is not None:
         with open(os.path.join(export_folder,'external_sensors.json'),'w') as f:
             json.dump({'external_sensors': filtered_external}, f)
@@ -1956,6 +1979,156 @@ def _imu_event_series(idx):
         'yaw_deg_s': yaw_deg_s, 'lat_vel': lat_vel,
         'duration_s': float(secs[-1]),
     }
+
+
+COMPASS_SAMPLE_SEC = 0.1
+COMPASS_DELTA_SEC = 0.5
+COMPASS_TURN_THRESHOLD_DEG = 5.0
+
+
+def _normalize_angle_delta(delta_deg):
+    '''Return a signed angle in [-180, 180), including compass wraparound.'''
+    return (np.asarray(delta_deg, dtype=np.float64) + 180.0) % 360.0 - 180.0
+
+
+def _smooth_xyz(values, times, window_sec=0.1):
+    '''Centered moving-average denoising for an irregular XYZ sensor stream.'''
+    if len(values) < 3:
+        return values
+    dt = np.diff(times)
+    dt = dt[np.isfinite(dt) & (dt > 0)]
+    if not len(dt):
+        return values
+    width = max(1, int(round(window_sec / float(np.median(dt)))))
+    if width <= 1:
+        return values
+    kernel = np.ones(width, dtype=np.float64) / width
+    return np.column_stack([
+        np.convolve(values[:, axis], kernel, mode='same')
+        for axis in range(3)
+    ])
+
+
+def _compass_heading_labels(acc, mag, query_t, frame_start,
+                            sample_sec, delta_sec, threshold_deg):
+    # The accelerometer points up at rest in these captures. Project magnetic
+    # north and the camera-forward (-Z) axis onto the horizontal plane.
+    acc_norm = np.linalg.norm(acc, axis=1)
+    up = np.divide(acc, acc_norm[:, None], out=np.zeros_like(acc),
+                   where=acc_norm[:, None] > 1e-9)
+    north = mag - up * np.einsum('ij,ij->i', mag, up)[:, None]
+    north_norm = np.linalg.norm(north, axis=1)
+    north = np.divide(north, north_norm[:, None], out=np.zeros_like(north),
+                      where=north_norm[:, None] > 1e-9)
+    forward = np.tile(np.asarray([0.0, 0.0, -1.0]), (len(acc), 1))
+    forward -= up * np.einsum('ij,ij->i', forward, up)[:, None]
+    forward_norm = np.linalg.norm(forward, axis=1)
+    forward = np.divide(forward, forward_norm[:, None], out=np.zeros_like(forward),
+                        where=forward_norm[:, None] > 1e-9)
+    east = np.cross(north, up)
+    east_norm = np.linalg.norm(east, axis=1)
+    east = np.divide(east, east_norm[:, None], out=np.zeros_like(east),
+                     where=east_norm[:, None] > 1e-9)
+
+    valid = ((acc_norm > 1e-9) & (north_norm > 1e-9)
+             & (forward_norm > 0.2) & (east_norm > 1e-9))
+    n = len(query_t)
+    pair_valid = valid[:n] & valid[n:]
+    if not pair_valid.any():
+        return {'available': False, 'selection': None,
+                'message': 'orientacao do telefone invalida para a bussola'}
+
+    # atan2(east, north) grows clockwise, so positive deltas mean RIGHT.
+    heading = np.degrees(np.arctan2(
+        np.einsum('ij,ij->i', forward, east),
+        np.einsum('ij,ij->i', forward, north))) % 360.0
+    delta = _normalize_angle_delta(heading[n:] - heading[:n])
+    labels = np.where(delta > threshold_deg, 'RIGHT',
+                      np.where(delta < -threshold_deg, 'LEFT', 'FRONT'))
+    valid_indices = np.flatnonzero(pair_valid)
+    strongest = int(valid_indices[np.argmax(np.abs(delta[valid_indices]))])
+    samples = [
+        {'time_s': round(float(query_t[i] - frame_start), 3),
+         'heading_deg': round(float(heading[i]), 3),
+         'future_heading_deg': round(float(heading[n + i]), 3),
+         'delta_deg': round(float(delta[i]), 3),
+         'label': str(labels[i])}
+        for i in valid_indices
+    ]
+    return {
+        'available': True,
+        'sample_sec': sample_sec,
+        'delta_sec': delta_sec,
+        'threshold_deg': threshold_deg,
+        'selection': str(labels[strongest]),
+        'selection_delta_deg': round(float(delta[strongest]), 3),
+        'selection_time_s': round(float(query_t[strongest] - frame_start), 3),
+        'samples': samples,
+    }
+
+
+def compass_turn_report(idx, sample_sec=COMPASS_SAMPLE_SEC,
+                        delta_sec=COMPASS_DELTA_SEC,
+                        threshold_deg=COMPASS_TURN_THRESHOLD_DEG):
+    '''Build 10 Hz LEFT/RIGHT/FRONT labels from compass heading changes.'''
+    folder = clip_path(idx)
+    magnetometer_path = os.path.join(folder, 'magnetometer.json')
+    if not os.path.isfile(magnetometer_path):
+        return {'available': False, 'selection': None,
+                'message': 'magnetometro nao encontrado neste clipe'}
+    try:
+        frames = load_json(folder, 'frames.json').get('frames', [])
+        accelerations = load_json(folder, 'accelerations.json').get('accelerations', [])
+        magnetometer = load_json(folder, 'magnetometer.json').get('magnetometer', [])
+    except (OSError, ValueError, TypeError) as exc:
+        return {'available': False, 'selection': None,
+                'message': f'magnetometro indisponivel: {exc}'}
+    if len(frames) < 2 or len(accelerations) < 2 or len(magnetometer) < 2:
+        return {'available': False, 'selection': None,
+                'message': 'amostras de bussola insuficientes neste clipe'}
+
+    def _stream(records):
+        records = sorted(records, key=lambda row: float(row.get('time_usec', 0)))
+        times = np.asarray([float(row['time_usec']) / 1e6 for row in records], dtype=np.float64)
+        values = np.asarray([[float(row[k]) for k in ('x', 'y', 'z')]
+                             for row in records], dtype=np.float64)
+        valid = np.isfinite(times) & np.isfinite(values).all(axis=1)
+        times, values = times[valid], values[valid]
+        if len(times):
+            unique = np.r_[True, np.diff(times) > 0]
+            times, values = times[unique], values[unique]
+        return times, values
+
+    acc_t, acc_xyz = _stream(accelerations)
+    mag_t, mag_xyz = _stream(magnetometer)
+    if len(acc_t) < 2 or len(mag_t) < 2:
+        return {'available': False, 'selection': None,
+                'message': 'amostras validas de bussola insuficientes'}
+    acc_xyz = _smooth_xyz(acc_xyz, acc_t)
+    mag_xyz = _smooth_xyz(mag_xyz, mag_t)
+
+    frame_start = float(frames[0]['time_usec']) / 1e6
+    frame_end = float(frames[-1]['time_usec']) / 1e6
+    start = max(frame_start, float(acc_t[0]), float(mag_t[0]))
+    end = min(frame_end, float(acc_t[-1]), float(mag_t[-1])) - delta_sec
+    if end < start:
+        return {'available': False, 'selection': None,
+                'message': 'bussola sem sobreposicao de 0.5 s com o video'}
+    query_t = np.arange(start, end + sample_sec * 0.25, sample_sec)
+    if not len(query_t):
+        return {'available': False, 'selection': None,
+                'message': 'janela de bussola vazia'}
+
+    def _interp_xyz(src_t, src_xyz, dst_t):
+        return np.column_stack([
+            np.interp(dst_t, src_t, src_xyz[:, axis]) for axis in range(3)
+        ])
+
+    both_t = np.r_[query_t, query_t + delta_sec]
+    acc = _interp_xyz(acc_t, acc_xyz, both_t)
+    mag = _interp_xyz(mag_t, mag_xyz, both_t)
+    return _compass_heading_labels(acc, mag, query_t, frame_start,
+                                   sample_sec, delta_sec, threshold_deg)
 
 
 def imu_quality_report(idx):
@@ -4581,6 +4754,13 @@ def api_suggest(idx):
     # Only 'walking' remains (the old 'vertical' suggestion was retired).
     return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, 'walking'), threshold=threshold, metric=metric))
 
+@app.route('/api/compass-turn/<int:idx>')
+def api_compass_turn(idx):
+    if idx < 0 or idx >= len(CLIPS):
+        return jsonify({'available': False, 'selection': None}), 404
+    return jsonify(compass_turn_report(idx))
+
+
 @app.route('/api/ssim/<int:idx>')
 def api_ssim(idx):
     if idx<0 or idx>=len(CLIPS): return jsonify({'error':'out of range'}),404
@@ -4798,7 +4978,11 @@ def api_crop():
         response = body.get('response') or 'parada'
         parts.append(response)
         if response == 'desvio':
-            parts.append(body.get('desvio_dir') or 'direita')
+            desvio_dir = body.get('desvio_dir')
+            if desvio_dir not in ('direita', 'esquerda'):
+                return jsonify({'status': 'error',
+                                'message': 'Escolha a direcao do desvio'}), 400
+            parts.append(desvio_dir)
 
     folder_name = '_'.join(parts)
 

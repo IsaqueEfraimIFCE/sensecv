@@ -30,6 +30,10 @@ logs/**
 *.avi
 *.mov
 
+# Generated audit datasets and scratch extraction output
+output_audit/
+tmp/
+
 # Local tooling / editor
 .claude/
 .codex/

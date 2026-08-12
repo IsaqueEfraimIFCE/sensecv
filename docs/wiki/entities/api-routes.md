@@ -2,7 +2,7 @@
 type: entity
 tags: [backend, api, http]
 code_refs: [app.py]
-updated: 2026-07-03
+updated: 2026-07-21
 ---
 
 # API routes
@@ -17,7 +17,7 @@ integer index into the current `CLIPS` list.
 | GET | `/video/<int:idx>` | video/mp4 | Streams the clip's actual MP4 path; honors HTTP `Range` for seeking |
 | GET | `/frame/<int:idx>/<int:source_index>.jpg` | image/jpeg | Decodes one source frame as a thumbnail for SSIM frame review |
 | GET | `/export-file/<folder>/<path:relpath>` | file | Serves generated export files from an export folder |
-| GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], velocity[], external_input[], quality, name, index, total, video_rotation}`; cached. `video_rotation` is the clip's display-rotation tag in degrees CW (cv2 `CAP_PROP_ORIENTATION_META`); the viewer undoes it so square/tagged clips aren't shown sideways |
+| GET | `/api/data/<int:idx>` | JSON | `{fps, duration, times[], accel[], rotation[], magnetometer[]|null, velocity[], external_input[], quality, name, index, total, video_rotation}`; cached. `magnetometer` is frame-interpolated XYZ (µT) from `magnetometer.json` like `accel`/`rotation`, or `null` when the clip has no magnetometer capture. `video_rotation` is the clip's display-rotation tag in degrees CW (cv2 `CAP_PROP_ORIENTATION_META`); the viewer undoes it so square/tagged clips aren't shown sideways |
 | GET | `/api/dronet/<int:idx>?time=&exact=` | JSON | Live DroNet steering/yaw/collision for a requested video time. See [[dronet-live-classification]] |
 | GET | `/api/sensemodel/<int:idx>?time=&exact=` | JSON | Live two-head SenseCV `.keras` obstacle/deviation prediction for a requested frame |
 | GET | `/api/activation/<int:idx>?time=&exact=` | JSON | Grad-CAM heatmaps (PNG data URIs) for DroNet collision + SenseCV obstacle/deviation heads on a requested frame. See [[activation-maps]] |
@@ -33,6 +33,7 @@ integer index into the current `CLIPS` list.
 | GET | `/api/suggest/<int:idx>?mode=` | JSON | Crop proposal; `mode` in `walking` (default) / `lateral` / `trim`. `lateral` is the PDF deviation cut (`suggest_deviation_cut`); `trim` is the same cut with the desvio search bounded to `[2s, duration-2s]` on clips ≥ 8 s (`suggest_trim_cut`; short clips, parada, and livre keep the plain behavior). The retired `vertical` mode falls through to `walking`. See [[crop-suggestion]] |
 | GET | `/api/ssim/<int:idx>?start=&end=` | JSON | Full SSIM frame selection for a crop, including selected frame metadata and thumbnail URLs |
 | GET | `/api/imu-events/<int:idx>?delta=` | JSON | IMU capture-quality verdict plus desvio/reducao/parada events with T1/T2, label windows, and confidence. See [[imu-event-labeling]] |
+| GET | `/api/compass-turn/<int:idx>` | JSON | Denoised 10 Hz compass headings, wraparound-safe 0.5 s deltas, LEFT/RIGHT/FRONT labels, and the strongest clip-level selection. See [[compass-turn-labeling]] |
 | POST | `/api/crop` | JSON | Performs the export. See [[export-pipeline]] |
 | POST | `/api/batch-export` | JSON | Runs `export_set()` over `{preset:'all'|'sensecv'|'supermarket', mode:'walking'|'lateral'}` and returns CSV/review links |
 | POST | `/api/manifest-export` | JSON | Plans the uploaded-datasets export queue: every clip whose dataset ships an `.xlsx` manifest. Resets `data/derived/manifest_exports/` by default |

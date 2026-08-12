@@ -79,6 +79,7 @@ body.clip-horizontal .video-wrapper{height:55vh}
 .tog{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:20px;padding:4px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s}
 .tog[data-ch="accel"]   {--tc:var(--red)}
 .tog[data-ch="rotation"]{--tc:var(--green)}
+.tog[data-ch="magnetometer"]{--tc:var(--blue)}
 .tog[data-ch="velocity"]{--tc:var(--purple)}
 .tog.on{color:var(--tc);border-color:var(--tc);background:color-mix(in srgb,var(--tc) 12%,transparent)}
 
@@ -406,6 +407,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       <div class="toggle-row">
         <button class="tog on" data-ch="accel">Aceleração</button>
         <button class="tog on" data-ch="rotation">Giroscópio</button>
+        <button class="tog on" data-ch="magnetometer">Magnetômetro</button>
         <button class="tog on" data-ch="velocity">Velocidade</button>
       </div>
     </div>
@@ -520,6 +522,13 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       </div>
 
       <!-- Classification -->
+      <div class='form-row'>
+        <label>Método para escolher a direção</label>
+        <div class='radio-group' id='rg-turn-method'>
+          <button class='rchip active' data-val='compass' type='button'>Bússola (0,5 s / 5°)</button>
+        </div>
+        <div class='input-hint' id='turn-method-status'>A direção será escolhida pela bússola.</div>
+      </div>
       <div class="form-row">
         <label>Ocorrência</label>
         <div class="radio-group" id="rg-occurrence">
@@ -804,6 +813,16 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
       </div>
       <div class="chart-wrap"><canvas id="chart-rotation"></canvas></div>
     </div>
+    <div class="chart-block" id="block-magnetometer">
+      <div class="chart-header">
+        <div><span class="chart-title" style="color:var(--blue)">Magnetômetro</span><span class="chart-subtitle">µT</span></div>
+        <div class="series-toggles" id="tog-magnetometer">
+          <button class="stog on" data-s="x">X</button><button class="stog on" data-s="y">Y</button>
+          <button class="stog on" data-s="z">Z</button><button class="stog on" data-s="mag">|M|</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="chart-magnetometer"></canvas></div>
+    </div>
     <div class="chart-block" id="block-velocity">
       <div class="chart-header">
         <div><span class="chart-title" style="color:var(--purple)">Velocidade estimada</span><span class="chart-subtitle">m/s · frente por passos · lateral integrada</span></div>
@@ -1039,6 +1058,7 @@ async function loadClip(idx, opts={}) {
   const resp = await fetch(`/api/data/${idx}`);
   DATA = await resp.json();
   currentIdx = idx;
+  autoPickDesvioDir();
   videoRotation = DATA.video_rotation || 0;
   applyVideoOrientation();
 
@@ -1108,7 +1128,7 @@ function getProposedFolderName() {
     parts.push(radioVal('rg-obs-pos') || 'centro');
     const resp = radioVal('rg-response') || 'parada';
     parts.push(resp);
-    if (resp === 'desvio') parts.push(radioVal('rg-desvio-dir') || 'direita');
+    if (resp === 'desvio') parts.push(radioVal('rg-desvio-dir') || 'sem_direcao');
   }
   return parts.join('_');
 }
@@ -1268,11 +1288,24 @@ function rebuildCharts(){
   makeChart('chart-rotation',[
     ds('X',zip(R.map(v=>v[0])),'#f85149'),ds('Y',zip(R.map(v=>v[1])),'#56d364'),ds('Z',zip(R.map(v=>v[2])),'#79c0ff')
   ]);
+  const magBlock=document.getElementById('block-magnetometer');
+  if(DATA.magnetometer){
+    magBlock.classList.remove('hidden');
+    const M=DATA.magnetometer;
+    const magMag = M.map(v=>Math.sqrt(v[0]**2+v[1]**2+v[2]**2));
+    makeChart('chart-magnetometer',[
+      ds('X',zip(M.map(v=>v[0])),'#f85149'),ds('Y',zip(M.map(v=>v[1])),'#56d364'),
+      ds('Z',zip(M.map(v=>v[2])),'#79c0ff'),ds('|M|',zip(magMag),'#e3b341')
+    ]);
+  } else {
+    magBlock.classList.add('hidden');
+    delete charts['chart-magnetometer'];
+  }
   makeChart('chart-velocity',[
     ds('Frente (passos)',zip(V.map(v=>v.forward)),'#56d364'),ds('Lateral',zip(V.map(v=>v.lateral)),'#f85149'),
     ds('|V|',zip(V.map(v=>v.speed)),'#bc8cff'),ds('Vz',zip(V.map(v=>v.vz)),'#79c0ff')
   ]);
-  ['accel','rotation','velocity'].forEach(ch => {
+  (DATA.magnetometer ? ['accel','rotation','magnetometer','velocity'] : ['accel','rotation','velocity']).forEach(ch => {
     document.getElementById('tog-'+ch).querySelectorAll('.stog').forEach((btn,i) => {
       btn.classList.add('on');
       btn.onclick=()=>{
@@ -1627,7 +1660,10 @@ function fmtTime(t){
 function updateExportBtn(){
   const ok=cropStart!=null&&cropEnd!=null&&cropEnd>cropStart;
   const noCollision=!document.getElementById('clip-name').classList.contains('error');
-  document.getElementById('export-btn').disabled=!(ok&&noCollision);
+  const needsDirection=radioVal('rg-occurrence')==='obstaculo'
+    && radioVal('rg-response')==='desvio';
+  const hasDirection=!needsDirection || radioVal('rg-desvio-dir')!=null;
+  document.getElementById('export-btn').disabled=!(ok&&noCollision&&hasDirection);
 }
 
 // ═══ Suggest crop ═══════════════════════════════
@@ -2339,17 +2375,55 @@ setupRadioGroup('rg-obs-pos',  ()=>{
   validateName();
 });
 setupRadioGroup('rg-desvio-dir',()=>validateName());
+let turnSelectionMode = 'compass';
+let compassTurnRequest = 0;
+setupRadioGroup('rg-turn-method', val=>{
+  turnSelectionMode = val;
+  autoPickDesvioDir();
+});
 
-// When "Desvio" is chosen as response, the deviation direction is the OPPOSITE
-// of the obstacle position (right obstacle → deviate left, left obstacle →
-// deviate right). If the obstacle is centered, default the deviation to left.
-function autoPickDesvioDir(){
-  const pos = radioVal('rg-obs-pos') || 'centro';
-  const dir = pos === 'direita' ? 'esquerda'
-            : pos === 'esquerda' ? 'direita'
-            : 'esquerda';
-  const chip = document.querySelector(`#rg-desvio-dir .rchip[data-val="${dir}"]`);
-  if(chip && !chip.classList.contains('active')) chip.click();
+// Compass labels can fill the direction automatically; the operator can still
+// correct the Direita/Esquerda chips manually.
+function setDesvioDir(direction){
+  document.querySelectorAll('#rg-desvio-dir .rchip, #qa-rg-desvio-dir .rchip').forEach(btn=>
+    btn.classList.toggle('active', btn.dataset.val===direction));
+  validateName();
+}
+
+async function autoPickDesvioDir(){
+  const status = document.getElementById('turn-method-status');
+  if(turnSelectionMode==='compass'){
+    const request = ++compassTurnRequest;
+    const idx = currentIdx;
+    status.textContent='Lendo bússola…';
+    try{
+      const response = await fetch(`/api/compass-turn/${idx}`);
+      const data = await response.json();
+      if(request!==compassTurnRequest || idx!==currentIdx) return;
+      if(!data.available){
+        setDesvioDir(null);
+        status.textContent=data.message || 'Bússola indisponível neste clipe.';
+        return;
+      }
+      const sign = data.selection_delta_deg>=0 ? '+' : '';
+      const detail = `Δθ ${sign}${data.selection_delta_deg.toFixed(1)}° em ${data.selection_time_s.toFixed(1)}s`;
+      if(data.selection==='RIGHT'){
+        setDesvioDir('direita');
+        status.textContent=`Bússola: RIGHT · ${detail}`;
+      }else if(data.selection==='LEFT'){
+        setDesvioDir('esquerda');
+        status.textContent=`Bússola: LEFT · ${detail}`;
+      }else{
+        setDesvioDir(null);
+        status.textContent=`Bússola: FRONT · ${detail} (sem curva)`;
+      }
+    }catch(error){
+      if(request!==compassTurnRequest) return;
+      setDesvioDir(null);
+      status.textContent=`Falha ao ler a bússola: ${error.message}`;
+    }
+    return;
+  }
 }
 
 // ═══ Export ═════════════════════════════════════

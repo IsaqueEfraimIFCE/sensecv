@@ -2,7 +2,7 @@
 type: concept
 tags: [algorithm, workflow]
 code_refs: [app.py, templates/index.html]
-updated: 2026-07-03
+updated: 2026-07-28
 ---
 
 # Crop suggestion
@@ -142,40 +142,30 @@ is the event's own `direction`, so cut and label are always consistent. The
 desvio response carries `event_type: 'desvio'`. This is the cut written by
 `export_set(mode='deviation')`.
 
-### Stop-onset fallback (no desvio — confirmed halt only)
+### Stop-onset fallback (no desvio — cadence loss near the clip end)
 When a clip has **no `desvio`**, `suggest_deviation_cut` falls back to **the
-moment the person starts to stop**. `detect_stop_onset(idx)` finds a standstill
-stretch (gait energy `std_mag < IMU_STOP_STD`) and returns its onset **T1** —
-but, **as of 2026-06-25**, only when the stop is *confirmed*: it must be
-**preceded by walking**, the person must **not resume walking afterwards**, and
-it must last `≥ SENSECV_IMU_STOP_CONFIRM_SEC` (default 0.8 s). A brief pause the
-person walks straight out of no longer counts. The crossing into standstill is
-**T1**; the same PDF label window is cut around it (`decisao` → `[T1-Δ, T1]`, the
-scene just before the halt), `event_type: 'parada'`, `stop_time` (= T1),
-`side: 'NONE'`. (The earlier 2026-06-23 version accepted any `≥ 0.3 s` dip *or*
-a run reaching the clip end, which let mid-walk pauses through.)
+moment the step rhythm disappears**. `detect_stop_onset(idx)` computes sliding
+gait periodicity with `_step_rhythm()`. It requires periodic stepping earlier
+in the clip, rejects clips still stepping in the final analysis window, and
+places **T1** at the first cadence window after the last detected stepping
+window. T1 must fall in the final `SENSECV_IMU_STOP_TAIL_SEC` seconds. The same
+PDF label window is cut around it (`decisao` → `[T1-Δ, T1]`), with
+`event_type:'parada'`, `stop_time:T1`, and `side:'NONE'`.
 
-> **Reality on the current dataset:** with the confirmed-stop rule, **0 of 389
-> clips** produce a parada cut. These captures end **mid-stride** — the person is
-> still walking right up to the final ~0.5 s, so a sustained standstill is never
-> recorded. Every dip below `IMU_STOP_STD` here is a sub-second mid-walk pause
-> the person walks out of, which the rule correctly rejects. Stop cuts will only
-> appear on footage that actually records the person settling into a halt.
-> Exporter and inspection video pick up the cut automatically through the shared
-> return shape when one does fire.
+`SENSECV_IMU_STOP_ONSET_MIN_SEC` and `SENSECV_IMU_STOP_CONFIRM_SEC` remain
+declared constants but are not referenced by the current
+`detect_stop_onset()`. A historical scan recorded 0 parada cuts in 389 clips;
+rerun that audit after detector or dataset changes.
 
-### Free-walk fallback (no desvio, no parada — sustained walk only)
-**As of 2026-06-25**, a clip with **neither a desvio nor a confirmed parada** can
-be a **free walk** (caminhada livre): unobstructed forward walking, a legitimate
-third dataset class alongside desvio and parada. It qualifies only when there is
-a **long continuous walking run** — `detect_free_walk_span(idx)` merges gait runs
-split by gaps `< SENSECV_IMU_WALK_MERGE_GAP_SEC` (0.3 s, absorbs flicker) and
-requires the longest merged run to last `≥ SENSECV_IMU_FREE_WALK_MIN_SEC`
-(default 3.0 s). The cut is then the **whole usable walking span**
-`[first_walk, last_walk]` over the gait mask (`std_mag > IMU_WALK_STD`), returned
-`found:true` with `event_type: 'livre'`, `side: 'NONE'`, `direction: None`. A
-clip with only short or broken walking (no sustained walking-only period) returns
-`found:false` (`'nenhum desvio, parada ou caminhada detectados'`).
+### Free-walk fallback (no desvio, no parada — detectable gait)
+A clip with **neither a desvio nor a parada** can be a **free walk** (caminhada
+livre), a legitimate third dataset class alongside desvio and parada. It
+qualifies when `_step_rhythm()` contains at least one window whose
+autocorrelation periodicity reaches `IMU_STEP_PERIODICITY`. The current
+`_livre_cut()` returns the **whole video** `[0, duration]`, with
+`event_type:'livre'`, `side:'NONE'`, and `direction:None`. A clip with no
+discernible periodic gait returns `found:false`
+(`'nenhum desvio, parada ou caminhada detectados'`).
 
 Current scan (389 clips): **162 desvio, 0 parada, 97 livre, 130 none** (the 130
 fall through to `walking` mode in the viewer).
@@ -306,4 +296,3 @@ images remain for dataset composition.
 The classifier is trained from the current exports in `history.json` and cached
 until that file changes. Export history for the exact source clip takes
 precedence over the classifier fallback.
-

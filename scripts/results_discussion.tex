@@ -1,0 +1,5 @@
+﻿MobileNetV4 performed best on both tasks, achieving 95.58\% accuracy and 95.54\% macro-F1 for path status, and 89.97\% accuracy and 89.80\% macro-F1 for deviation direction. It also had the fewest parameters, providing the best performance--cost trade-off. MobileNetV1 ranked second for deviation classification, EfficientNet-B0 was competitive for path status, and ResNet-50 showed no advantage despite its larger size and higher variability.
+
+Combining both heads yielded comparable final-action results: MobileNetV4 reached 89.85\% accuracy and 91.39\% macro-F1. The lower final-action accuracy relative to path status reflects the greater difficulty of deviation classification.
+
+Path-status classification was more stable across architectures. Its macro-F1 values were close to accuracy, indicating balanced performance between \textsc{free} and \textsc{blocked}. The higher variation in deviation results suggests greater sensitivity to initialization, batch composition, and the unseen environment.

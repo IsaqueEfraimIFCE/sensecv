@@ -2,10 +2,15 @@
 type: entity
 tags: [backend, flask, python]
 code_refs: [app.py]
-updated: 2026-06-03
+updated: 2026-07-21
 ---
 
 # app.py - Flask backend
+
+`compass_turn_report()` is the optional magnetometer labeling path used by the
+viewer. It produces wraparound-safe LEFT/RIGHT/FRONT heading-change labels at
+10 Hz and exposes the strongest clip-level change through
+`/api/compass-turn/<idx>`. See [[compass-turn-labeling]].
 
 The entire server in one file. Discovers and refreshes clips, serves video with
 HTTP range support, computes per-frame sensor data plus estimated velocity,

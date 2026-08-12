@@ -2,7 +2,7 @@
 type: entity
 tags: [frontend, html, chartjs]
 code_refs: [templates/index.html]
-updated: 2026-07-03
+updated: 2026-07-21
 ---
 
 # templates/index.html - Viewer and annotator UI
@@ -34,9 +34,14 @@ pill tab bar with an accent-glow active state, rounded cards with soft shadows,
   "player" stays mounted and is shown on the two video-centric views.
 - **Persistent player** (`#player-left` + `.right`) - video, timeline canvas,
   time display with play button, vertical warning banner, chart toggles, live
-  value boxes, and the three Chart.js charts (acceleration, gyroscope, estimated
-  velocity, each with per-series toggles; acceleration also gets an `Input` trace
-  when `/api/data` provides external button samples) plus the quick-actions strip.
+  value boxes, and up to four Chart.js charts (acceleration, gyroscope,
+  magnetometer, estimated velocity, each with per-series toggles; acceleration
+  also gets an `Input` trace when `/api/data` provides external button samples)
+  plus the quick-actions strip. The magnetometer chart (X/Y/Z/`|M|`, blue) only
+  appears when `DATA.magnetometer` is non-null — `rebuildCharts()` hides
+  `#block-magnetometer` and skips creating `chart-magnetometer` for clips
+  without a `magnetometer.json`, same file the Bússola button already requires.
+  See [[compass-turn-labeling]].
 
 ## Clip navigation
 `buildClipSelect()` renders the clip dropdown with `<optgroup>` sections from
@@ -182,6 +187,14 @@ It re-runs on `loadedmetadata` and `resize`.
 `e` mark end; `[` / `]` previous / next clip.
 
 ## Talks to
+
+The Anotar classification area includes a Bússola direction-selection button.
+It calls `/api/compass-turn/<idx>` and maps its strongest 0.5 s heading label to
+the direction chips. A compass `FRONT` result leaves direction unset, and an
+unset deviation direction keeps Export disabled. The direction chips still
+allow manual correction.
+See [[compass-turn-labeling]].
+
 [[api-routes]] (`/video/<idx>`, `/frame/<idx>/<source_index>.jpg`,
 `/api/data/<idx>`, `/api/dronet/<idx>`, `/api/sensemodel/<idx>`,
 `/api/activation/<idx>`,

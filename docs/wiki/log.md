@@ -5,6 +5,127 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-08-12] feature | magnetometer chart in the viewer player
+- `get_clip_data()` now loads `magnetometer.json` (when present) and adds a
+  frame-interpolated `magnetometer` field to `/api/data`, alongside `accel`
+  and `rotation`.
+- Viewer gains a fourth chart (`#block-magnetometer`, blue, X/Y/Z/`|M|`
+  per-series toggles) between Giroscópio and Velocidade, built the same way
+  as the acceleration/gyroscope charts and included in the shared zoom sync.
+  It self-hides for clips without a magnetometer capture.
+- Pages touched: [[viewer-frontend]], [[api-routes]].
+
+## [2026-07-27] feature | save the DINO endpoint training subset
+- Added `scripts/save_dinov2_endpoints_train_dataset.py` to reproduce the
+  endpoint trainer's current selection/split and copy only its train images.
+- The portable ImageFolder-style output includes `labels.csv` provenance and
+  `split_summary.json` with class/frame/clip counts for all three splits.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-26] feature | MobileNetV1 endpoint initialization comparison
+- Added `scripts/train_mobilenetv1_endpoints_kaggle.py` for a same-split
+  ImageNet-versus-random-initialization MobileNetV1 comparison.
+- It shares the DINO endpoint trainer's first/last sequence selection,
+  clip-grouped train/validation split, fixed day-22 test set, undated-clear
+  fallback, and per-class split counts.
+- It saves both best-validation checkpoints and one comparison metrics JSON.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-26] improve | endpoint split class-count summary
+- The endpoint DINOv2 trainer now prints the number of frames in every class
+  for train, validation, and test immediately after creating the split.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-26] correction | undated clear clips belong to day 22
+- The endpoint DINOv2 trainer now assigns every undated `sem_obstaculos` /
+  `source=clear` sequence to a `SenseCV-22-06-2026-clear_*` clip ID before
+  splitting, preserving the dataset rule even if `labels.csv` omits the date.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-26] feature | minimal endpoint-only DINOv2 Kaggle trainer
+- Added `scripts/train_dinov2_endpoints_kaggle.py`, a single-cell, `CONFIG`-only
+  pipeline over one existing all-frames dataset.
+- It keeps only the first and last frame of each decoded sequence, preserves
+  the clip-grouped validation split and fixed day-22 test set, caches frozen
+  DINOv2 embeddings, and trains only one dense classification layer.
+- Output is limited to `model.pt`, `metrics.json`, and two console messages;
+  the existing full DINOv2 trainer remains unchanged.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-22] fix | bundle the required DINO dataset builder
+- `train_dinov2_classifier.py` now embeds an integrity-checked copy of the
+  labelled-MP4/day-22-clear builder and uses it whenever no compatible sibling
+  script is available. A single pasted/uploaded trainer now works on Kaggle.
+- Compatible local companions still override the bundled copy; incompatible
+  older image-folder builders are ignored without changing dataset provenance.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-22] feature | standalone DINOv2 test evaluator
+- Added `scripts/evaluate_dinov2_test.py` to restore promoted DINOv2 `model.pt`
+  checkpoints and evaluate the exact fixed day-22 frames reconstructed from
+  each dataset's `labels.csv`.
+- Outputs per-dataset metrics/confusion/per-class reports and per-frame labels,
+  confidence, and probabilities, plus a combined summary. Evaluation is
+  unaugmented and unweighted.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-22] correction | require the labelled-MP4 DINO builder
+- The DINOv2 classifier now accepts only the builder that decodes labelled
+  `Todos_cortes_auto_trim/deviation` MP4 cuts, uses `cut_info.json` with
+  `sources.csv` fallback, and adds DINO-selected day-22 clear images.
+- The older published image-folder companion is rejected rather than silently
+  creating a dataset with different provenance. Upload both current scripts to
+  Kaggle until the matching companion contract is published.
+- Build defaults are threshold `0.96`, cap 25 frames per clip, and seed `43`;
+  the MobileNet companion defaults to `clip_balanced` only.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-22] fix | Kaggle DINOv2 companion bootstrap
+- `train_dinov2_classifier.py` now searches Kaggle attachments and, for a
+  pasted standalone cell, downloads `train_mobilenet_dino.py` from the public
+  SenseCV repository into `/kaggle/working` instead of failing during import.
+- Added compatibility defaults and local classification metrics so both the
+  published image-dataset companion and newer video-dataset revision load.
+  Internet-enabled auto-download and explicit two-file upload are supported.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-21] feature | DINOv2 single-head classification trainer
+- Added `scripts/train_dinov2_classifier.py`, which reuses the existing DINO
+  dataset builder and trains pretrained DINOv2 ViT-S/14 or ViT-B/14 classifiers.
+- Preserved clip-grouped splits, fixed day-22 testing, canonical class order,
+  label-safe augmentation, train-only balancing, validation-only promotion,
+  and per-trial reports. The default sweep compares a linear probe with last-one
+  and last-two transformer-block fine-tuning.
+- Promoted checkpoints are `model.pt` files with the backbone, class,
+  preprocessing, and state-dict metadata; they are not yet viewer-loadable.
+- Pages touched: [[kaggle-image-datasets]], [[index]].
+
+## [2026-07-21] feature | day-22 clear frames in DINO test datasets
+- The DINO builder now considers every `*sem_obstaculos*.jpg` from dataset8's
+  `deviation_lrn/none` folder, groups all 1,740 source images by 58 day-22
+  `source_clip` values, and runs the normal DINOv2 selector independently per
+  clip. Only selected frames enter both outputs as `free_path` / `none`; frame
+  indices, timestamps, and clip provenance come from the source `labels.csv`.
+- Dataset freshness compares source count plus DINO threshold/cap, so older or
+  differently selected outputs rebuild automatically. `--day22-clear-dir ""`
+  disables the addition and `--no-build` still skips all building.
+- The fixed test day returns to 22 now that it has clear `free_path`/`none`
+  examples alongside obstacle/left/right cuts.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-21] feature | selectable pretrained MobileNetV1–V4 DINO trainer
+- `scripts/train_mobilenet_dino.py` now accepts `--mobilenet-version v1|v2|v3|v4`
+  and fixes every option to pretrained ImageNet weights at baseline width
+  (`alpha=1.0`) and 224×224; incompatible values and weight-load failures stop
+  explicitly instead of falling back to training from scratch.
+- V1/V2/V3 use Keras Applications and promote `model.keras`; V4 uses timm's
+  `mobilenetv4_conv_small.e2400_r224_in1k` PyTorch preset and promotes
+  `model.pt`, while retaining the clip split, weighting, fine-tuning trials,
+  validation-only model selection, and report schema.
+- Documented the current trimmed-video DINO build input and the V4 viewer-format
+  limitation.
+- Pages touched: [[kaggle-image-datasets]], [[index]].
+
 ## [2026-07-14] improve | DINO MobileNet fine-tuning strategy sweep
 - `scripts/train_mobilenet_dino.py` now compares three reproducible recipes on
   one clip-grouped split: the original full-network baseline, conservative
@@ -909,3 +1030,363 @@ Append-only. One entry per operation. Greppable prefix:
 - Open questions filed: whether [[walking-detection]] should use fused `speed`
   from [[velocity-estimation]]; frame-exact vs keyframe-copy cut tradeoff in
   [[export-pipeline]].
+
+## [2026-07-21] feature | compass turn labeling selector
+- `app.py`: added denoised, tilt-compensated magnetometer headings sampled at
+  10 Hz, wraparound-safe 0.5 s deltas, the ±5 degree LEFT/RIGHT/FRONT rule, and
+  `GET /api/compass-turn/<idx>`; exported cuts retain rebased magnetometer data.
+- `templates/index.html`: added Bússola, Normal, and Nenhum direction-selection
+  modes; FRONT or no automation leaves direction unset and prevents an
+  incomplete deviation export.
+- Verified Python compilation, rendered JavaScript syntax, the Flask route on a
+  real clip, and the 358 to 3 degree wraparound case.
+- Pages touched: [[compass-turn-labeling]], [[viewer-frontend]], [[api-routes]],
+  [[app-backend]], [[export-pipeline]], [[index]].
+
+## [2026-07-21] change | compass-only turn selector
+- Removed the Normal and Nenhum method buttons from the viewer; Bússola is now
+  the sole and default automatic direction method, with manual correction still
+  available through the direction chips.
+- Pages touched: [[compass-turn-labeling]], [[viewer-frontend]], [[index]].
+
+## [2026-07-27] change | exclude compound-CAIXA clips from DINOv2 endpoints
+- `train_dinov2_endpoints_kaggle.py` now excludes the 44 clips whose label
+  manifest `OBSTACULO` value is `CAIXA` plus a qualifier before choosing each
+  sequence's first and last frames; a plain `CAIXA` remains eligible.
+- The startup summary and `metrics.json` report the excluded clip/frame counts
+  and `metrics.json` preserves the exact excluded `source_clip` list.
+- Verified against the local obstacle/free-path `labels.csv`: 2,066 source
+  frames from 44 clips excluded and 1,590 endpoint frames retained.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] change | train DINOv2 linear probe on all eligible frames
+- `train_dinov2_endpoints_kaggle.py` now retains every frame from each eligible
+  clip instead of selecting only the first and last frame per sequence.
+- Compound-CAIXA exclusion and clip-grouped train/validation/fixed-day test
+  splitting remain in place, preventing frame leakage between splits.
+- The output directory and `metrics.json` selection name now identify the
+  all-frame run; the older endpoint dataset saver and MobileNet comparison
+  remain endpoint-only.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] feature | label-safe left/right flip augmentation
+- The all-frame DINOv2 trainer now adds one horizontally flipped copy of every
+  training image for left/right datasets, swapping `left` and `right` labels
+  while preserving `none`.
+- Validation/test are unchanged, obstacle/free-path skips the augmentation, and
+  both the checkpoint and metrics report source/flipped/effective frame counts.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] dataset | unique reviewed exports from UFC 24-07
+- Added `make_kaggle_exports_dataset.py`: it recovers export provenance by exact
+  accelerometer matching, validates labels against the collection XLSX, and
+  writes 224×224 `obstacle_freepath` / `deviation_lrn` ImageFolder datasets.
+- Built 27 unique raw clips and 814 images per scheme from the reviewed exports
+  only; unused raw IDs 03/13/28 contribute nothing.
+- First appearance wins: later exports 05/08/13/18 were ignored because their
+  raw clips already appeared in exports 04/07/12/17.
+- Verified all label paths, 224×224 RGB samples, class/source counts, ZIP CRC,
+  and archive SHA-256.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | add UFC 24-07 exports to DINOv2 train split
+- `train_dinov2_endpoints_kaggle.py` auto-discovers the unique reviewed-export
+  package and appends its matching task rows to training only, after the base
+  validation/test split is fixed.
+- The attachment is required by default; label mismatches fail, and clips that
+  overlap the base dataset are skipped to avoid duplicate or cross-split data.
+- Verified obstacle training: 17,199 base + 814 supplemental = 18,013 frames.
+  Verified deviation training: 16,579 base + 814 supplemental = 17,393 source
+  frames, then label-safe flips produce 34,786 effective frames. Validation and
+  test counts are unchanged.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | hold out both day 22 and July 24
+- The DINOv2 all-frame trainer now merges the reviewed July-24 package before
+  splitting and uses `test_days=[22,24]`.
+- Test is 118 clips / 3,970 frames: the original 3,156 day-22 frames plus all
+  814 July-24 frames. No test clip overlaps train/validation or receives flip
+  augmentation.
+- Obstacle test labels are 2,230 obstacle / 1,740 free-path; deviation test
+  labels are 1,247 left / 983 right / 1,740 none.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | add only new auto-trim dates to train/validation
+- The DINOv2 trainer now materializes all frames from
+  `Todos_cortes_auto_trim/deviation` into a task-specific dataset under its
+  output directory, then includes those rows in the train/validation split.
+- Of 567 source folders, 171 new clips (29,124 frames) from July 2/3/5/6/7 are
+  accepted; 352 already-loaded clips and all 44 CAIXA clips are ignored.
+- Full dates and `source_clip` identities are compared against both existing
+  datasets, preventing duplicate dates/clips. Days 22 and 24 remain test-only.
+- The built dataset writes class folders, `labels.csv`, and
+  `dataset_info.json`; checkpoint/metrics include its provenance and skip
+  counts.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | balance background frames within clips
+- The all-frame DINOv2 trainer now downsamples `free_path` to the obstacle
+  count, or `none` to the combined left/right count, independently in train
+  and validation while preserving every foreground frame.
+- Exact quotas are distributed proportionally across background clips, and
+  evenly spaced frames are retained within each clip. Days 22 and 24 keep
+  their natural test distribution.
+- Checkpoint and metrics output record pre/post totals and per-clip keep
+  fractions; left/right flip augmentation remains training-only and runs
+  after balancing.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | do not flip none frames
+- Horizontal augmentation now creates copies only for `left` and `right`,
+  swapping their labels. The balanced `none` frames are retained only in their
+  original orientation.
+- Validation and test remain unaugmented; augmentation metrics now explicitly
+  record `none` as an excluded label.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | exclude collection day 9
+- `CONFIG["excluded_days"] = [9]` now removes all day-9 rows before splitting,
+  so they cannot enter train, validation, or test.
+- Day-9 auto-trim folders are skipped before video decoding. Checkpoint,
+  metrics, and console output record the excluded clips and frame count.
+- Days 22 and 24 remain the fixed test holdout.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-27] training | replace linear probe with three-layer MLP
+- The frozen DINOv2 embeddings now feed dense layers `384 -> 256 -> 64 ->
+  classes`, with ReLU activations and dropout rates 0.3/0.2 between layers.
+- Hidden dimensions and dropout are configurable. The resolved architecture is
+  printed and saved in both the checkpoint and metrics.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | restore linear probe and equalize deviation validation
+- The classifier is restored to one dense layer from the frozen DINOv2
+  embedding directly to the class logits; the temporary 256/64-neuron MLP and
+  dropout configuration were removed.
+- Deviation validation now clip-proportionally samples every class to its
+  smallest class count, producing equal `none`, `left`, and `right` totals
+  without augmenting validation.
+- Direction-only training flips still never copy `none`; together with
+  pre-flip background balancing they produce equal effective train totals for
+  `none`, `left`, and `right`; a final equal-class sampling pass guarantees
+  this even if a future input has fewer `none` frames than directional frames.
+  Obstacle/free-path balancing is unchanged.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | balance only none and split by balanced frame totals
+- Removed the temporary all-class equalizer: `left` and `right` are no longer
+  downsampled to match each other in train or validation.
+- For deviation validation and test, only `none` is sampled, targeting the
+  rounded mean of the unchanged left/right frame counts. Training retains its
+  prior pre-flip background target and direction-only flips never copy `none`.
+- The train/validation candidate pool is balanced before clip selection.
+  A nearest whole-clip subset search chooses validation clips by balanced frame
+  totals, rather than choosing 15% of clips regardless of clip length.
+  Deviation compensates its selection target for the different train/validation
+  `none` policies so the final post-balance validation share approaches 0.15;
+  original rows are recovered before per-split sampling.
+- Obstacle/free-path test data remains naturally distributed.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | restore independent train/validation background balance
+- Restored the earlier trainer policy: clip-count-based grouped splitting,
+  followed by independent train and validation background sampling.
+- `free_path` matches obstacle frames; `none` matches combined left/right
+  frames. Foreground rows are preserved and background quotas are distributed
+  proportionally across clips with evenly spaced temporal selection.
+- Test days 22 and 24 retain their natural distribution. Later day-9
+  exclusion, mean-of-directions sampling, frame-target split search, and
+  all-class balancing were removed.
+- Restored that version's augmentation behavior: the balanced training set is
+  duplicated, flips swap left/right, and flipped `none` remains `none`.
+- The classifier remains the original single linear layer.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | remove balancing and retain day-9 exclusion
+- Removed all train/validation background sampling: every eligible frame is
+  retained after the clip-grouped split, with no class or frame-rate balance.
+- Restored `excluded_days=[9]` for packaged rows and auto-trim folders; auto
+  day-9 videos are skipped before decoding.
+- Days 22 and 24 retain their natural test distribution. Training-only flip
+  augmentation and the single linear classifier are unchanged.
+- Removed background-balance fields from checkpoint and metrics; day-9
+  exclusion provenance remains recorded.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | remove undated-clear day-22 fallback
+- `read_training_rows()` no longer rewrites undated `sem_obstaculos` or
+  `source=clear` rows as day 22.
+- Test-day membership now depends only on an explicit `DD-MM-YYYY` in
+  `source_clip`. Existing packaged clear rows with dated day-22 metadata remain
+  day-22 test frames.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | add all-frame train_val/test materializer
+- Added `save_dinov2_allframes_trainval_test_dataset.py`, which reuses the
+  trainer's ingestion declarations without running training.
+- Output has only `train_val/<class>` and `test/<class>`; no train/validation
+  split, balancing, subsampling, or augmentation is applied.
+- Day 9 and compound-CAIXA clips are excluded; explicitly dated days 22 and 24
+  form test. Base, reviewed July-24, and eligible auto-trim frames are included.
+- Root `labels.csv` and `split_summary.json` preserve split and source
+  provenance. Auto-trim decoding uses a temporary cache removed after copying.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | make train_val/test materializer standalone
+- Inlined dataset discovery, compound-CAIXA/day-9 exclusion, reviewed July-24
+  merging, auto-trim labeling/decoding, and day parsing into the exporter.
+- Removed AST loading and the runtime dependency on
+  `train_dinov2_endpoints_kaggle.py`; the exporter can now be pasted into one
+  Kaggle cell by itself.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | export both classification tasks
+- The standalone materializer now reads the all-frame dataset root and exports
+  both `obstacle_freepath` and `deviation_lrn`.
+- Each task has independent `train_val` and `test` class folders; deviation
+  therefore includes `left`, `right`, and `none` without mixing those labels
+  into the obstacle/free-path class space.
+- The combined root manifest adds a `task` column, and the summary reports
+  counts independently for both tasks.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | store each frame once with two labels
+- Replaced the duplicated per-task image trees with
+  `train_val/images` and `test/images`; each physical frame is copied once.
+- Root `labels.csv` now has `obstacle_label` and `deviation_label` columns for
+  every image, plus split and source-clip provenance.
+- Base and July-24 manifests are paired one-to-one by clip/frame identity.
+  Auto-trim video is decoded once and both labels are derived from event
+  metadata.
+- Summary counts now describe unique images and both label distributions.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | add universal DINOv2 cosine selector
+- Added a standalone Kaggle script that embeds the first 1,000 valid
+  multi-label frames with frozen DINOv2 ViT-S/14.
+- Greedy selection accepts a frame only when its cosine similarity is below
+  0.90 for every previously accepted frame, guaranteeing the same pairwise
+  constraint in the final dataset.
+- Selected images preserve both labels and source clips. A full decision audit
+  and verified maximum pairwise similarity accompany the output manifest.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | train both classifiers from selected images
+- Added a Kaggle trainer that reads only the universal cosine selector output;
+  no unselected source frame is discovered or loaded.
+- Selected test membership remains unchanged. Selected train_val clips are
+  split into train/validation with the established class-stratified clip policy.
+- Frozen DINOv2 embeddings feed separate single-linear-layer obstacle and
+  deviation classifiers. Existing deviation-only flip augmentation is retained.
+- Outputs include both checkpoints and combined metrics with split provenance.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | print selected split class counts
+- The selected-image trainer now prints per-class counts for source train,
+  effective post-augmentation train, validation, and test for both classifiers.
+- Effective deviation counts expose the label-swapped flip copies separately
+  from the original selected training rows; the same counts are saved in
+  metrics.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] dataset | bypass DINOv2 selection for test
+- Universal cosine embedding and filtering now apply only to train_val rows.
+- Every original test row is copied unchanged and is never opened by the
+  DINOv2 embedding loader; the audit covers train_val candidates only.
+- Summary output separately records selected/rejected train_val frames, fully
+  preserved test frames, total output, and `dinov2_applied_to_test=false`.
+- The selected-image trainer consequently evaluates on the complete preserved
+  selected-dataset test split.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | enforce no class balancing
+- The selected-image trainer explicitly records that balancing and class
+  weights are disabled for both classifiers.
+- Runtime assertions require the clip-grouped train/validation split to retain
+  every selected source row exactly once; test membership remains untouched.
+- Checkpoints, metrics, and console output expose the no-balancing invariant.
+  Existing flip augmentation adds copies without sampling source rows.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | balance selected training backgrounds by clip rate
+- Superseding the preceding no-balance setting, training now samples only
+  background classes at evenly spaced per-clip intervals.
+- Free-path targets the obstacle count; none targets the rounded mean of
+  left/right. Every obstacle, left, and right source row is preserved.
+- Validation and test remain unbalanced and untouched. No class weights or
+  weighted sampler are introduced.
+- Metrics/checkpoints record exact before/after totals and per-clip keep
+  fractions/frame strides; console output prints every stage's class counts.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | apply the training balance policy to validation
+- Validation now independently samples free-path and none frames with the same
+  per-clip, evenly spaced policy used for training.
+- Validation free-path matches its obstacle count; validation none matches the
+  rounded mean of its left/right counts. Foreground rows remain intact.
+- Validation is not augmented, and test remains naturally distributed and
+  untouched.
+- Metrics/checkpoints and console output expose validation counts before and
+  after balancing plus its per-clip sampling details.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | add selected-image ImageNet MobileNetV1 trainer
+- Added a standalone Kaggle trainer for the two-label similarity-selected
+  dataset using two independently fine-tuned ImageNet MobileNetV1 models.
+- It mirrors the DINOv2 trainer's authoritative test split, per-task
+  clip-grouped train/validation split, independent background balancing, and
+  training-only deviation flip policy.
+- It prints every class count, saves best-validation checkpoints for both
+  tasks, and writes combined histories, split metadata, and metrics.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] training | add merged all-frame MobileNetV1 trainer
+- Added a standalone ImageNet MobileNetV1 trainer that reproduces the supplied
+  DINOv2 script's runtime dataset construction and split.
+- Base, July-24, and auto-trim frames follow the same CAIXA exclusion,
+  duplicate avoidance, days 22/24 test, balancing, and flip rules.
+- MobileNetV1 is fine-tuned end-to-end, restores its best validation-loss
+  state, and saves the full build/split history beside `model.pt`.
+- Pages touched: [[kaggle-image-datasets]].
+
+## [2026-07-28] documentation | create Markdown paper working copy
+- Created `WiP_2026_PT/artigo.md` from the Portuguese LaTeX draft without
+  modifying `artigo.tex`.
+- Corrected the model formulation to one binary obstacle head and one
+  left/right/none head; forward and stop are decoded from the joint outputs.
+- Documented all six valid output pairs. Clear+left/right remains actionable
+  for corridor centering; the obstacle head disambiguates only none into
+  forward or stop.
+- Pages touched: [[kaggle-two-head-dataset]].
+
+## [2026-07-28] documentation | detail automatic IMU selection in paper
+- Replaced the inertial-method placeholder in `WiP_2026_PT/artigo.md` with the
+  implemented gravity alignment, per-clip yaw/lateral fallback, persistence,
+  stop/deceleration, quality, confidence, and temporal-window rules.
+- Added primary references for gravity-based heading, gait autocorrelation,
+  zero-velocity detection, and MEMS inertial drift.
+- Explicitly distinguished SenseCV's empirical thresholds and simple
+  rolling-energy/drift-removal implementation from the cited methods.
+- Pages touched: [[imu-event-labeling]].
+
+## [2026-07-28] documentation | generalize scientific IMU description
+- Recast the inertial-selection section of `WiP_2026_PT/artigo.md` as a
+  scientific methods description without calibration values or validation
+  results.
+- Consolidated the four inertial references into one broad methodological
+  citation instead of assigning an individual source to each processing step.
+- Pages touched: [[imu-event-labeling]].
+
+## [2026-07-28] documentation | consolidate suggested-cut reference
+- Added `WiP_2026_PT/referencia_cortes_sugeridos_imu.md` with the complete
+  event-to-window-to-export path, relevant code excerpts, API and script
+  consumers, wiki knowledge, internal methodology, and academic citations.
+- Clarified the distinction between suggesting a temporal window, writing the
+  MP4, and selecting visually distinct frames inside the cut.
+- Corrected the free-walk documentation: detectable cadence qualifies the clip,
+  while the current `_livre_cut()` returns the full `[0, duration]` interval.
+- Reconciled later code changes: free-walk now requires any detectable cadence
+  window, while the stop fallback locates cadence loss near the clip end;
+  `IMU_STOP_ONSET_MIN_SEC` and `IMU_STOP_CONFIRM_SEC` are currently declared
+  but unused.
+- Pages touched: [[crop-suggestion]], [[imu-event-labeling]].

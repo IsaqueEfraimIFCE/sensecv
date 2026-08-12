@@ -1,0 +1,7 @@
+﻿This work presented \sensecv{}, an egocentric visual--inertial dataset for indoor assistive navigation. It contains 592 events collected across three locations, with videos, inertial signals, and metadata recorded by an open-source Android application. The protocol includes free-path, lateral-deviation, and stopping events, while accelerometer and gyroscope data support temporal delimitation and label verification.
+
+With Location C reserved for testing, MobileNetV4 achieved the best performance and had the fewest parameters, reaching 95.58\% accuracy for path status and 89.97\% for deviation direction. The higher variability in deviation classification indicates greater difficulty generalizing this task to unseen environments.
+
+Reducing sampling from 30 to 10~FPS preserved path-status performance and may improve deviation classification when temporal separation is maintained. Conversely, random frame-level splits produced artificially high results, confirming that correlated frames can inflate performance estimates.
+
+Future work will increase the diversity of locations, participants, and devices, evaluate temporal models, and explore the preserved location and magnetometer signals.

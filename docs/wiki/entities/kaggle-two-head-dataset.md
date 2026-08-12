@@ -2,7 +2,7 @@
 type: entity
 tags: [dataset, kaggle, training, two-head]
 code_refs: [scripts/make_kaggle_two_head_dataset.py, scripts/train_two_head_kaggle.py, scripts/kaggle_trainval_copy_paste.py]
-updated: 2026-06-11
+updated: 2026-07-28
 ---
 
 # Kaggle two-head dataset
@@ -21,6 +21,26 @@ paste-into-notebook variant).
 |---|---|
 | `obstacle_class` | 0 = clear / no obstacle, 1 = obstacle |
 | `deviation_class` | 0 = left (esquerda), 1 = right (direita), 2 = none |
+
+## Decoded navigation action
+
+The two heads jointly encode the four user-facing actions; there is no separate
+four-class action head:
+
+| obstacle head | deviation head | decoded action |
+|---|---|---|
+| 0 clear | 0 left | left |
+| 0 clear | 1 right | right |
+| 0 clear | 2 none | forward |
+| 1 obstacle | 0 left | left |
+| 1 obstacle | 1 right | right |
+| 1 obstacle | 2 none | stop |
+
+All six combinations are valid. A left/right prediction remains actionable
+when the obstacle head says clear because it can guide the person toward the
+middle of a corridor. The obstacle output changes the decoded action only when
+the deviation output is none: clear+none means forward, while obstacle+none
+means stop.
 
 ## Layout
 

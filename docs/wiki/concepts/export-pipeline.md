@@ -2,10 +2,14 @@
 type: concept
 tags: [workflow, ffmpeg, export]
 code_refs: [app.py]
-updated: 2026-05-30
+updated: 2026-07-21
 ---
 
 # Export pipeline
+
+When a source contains `magnetometer.json`, `save_sensor_data()` now filters and
+rebases it with the same cut boundaries as frames, acceleration, and rotation.
+This preserves the optional [[compass-turn-labeling]] stream in exported clips.
 
 What happens when the operator clicks **Exportar** -> `POST /api/crop` ->
 `api_crop()` in [[app-backend]].
