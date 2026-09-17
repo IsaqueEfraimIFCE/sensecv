@@ -2380,6 +2380,105 @@ def suggest_trim_cut(idx, margin=None):
     return out
 
 
+RETURN_TURN_OFFSETS_SEC = [
+    float(x) for x in os.environ.get('SENSECV_RETURN_TURN_OFFSETS_SEC', '0.5,0.75,1.0').split(',')
+    if x.strip()
+]
+RETURN_TURN_DURATION_SEC = float(os.environ.get('SENSECV_RETURN_TURN_DURATION_SEC', '0.5'))
+RETURN_TURN_EXPORTS_DIR = os.path.join(DERIVED_DIR, 'return_turn_exports')
+_OPPOSITE_SIDE = {'LEFT': 'RIGHT', 'RIGHT': 'LEFT'}
+
+
+def suggest_return_turn_cuts(idx, offsets=None, duration=None):
+    """Windows after the trim desvio cut's T1, labelled with the opposite side (the walk back to the corridor centre)."""
+    offsets = RETURN_TURN_OFFSETS_SEC if offsets is None else [float(o) for o in offsets]
+    duration = RETURN_TURN_DURATION_SEC if duration is None else float(duration)
+    base = suggest_trim_cut(idx)
+    desvio_side = base.get('side')
+    if not base.get('found') or base.get('event_type') != 'desvio' or desvio_side not in _OPPOSITE_SIDE:
+        return {'found': False, 'mode': 'return_turn', 'cuts': [],
+                'source_event': base.get('event_type'),
+                'message': 'clipe sem desvio LEFT/RIGHT'}
+    clip_duration = float(_imu_event_series(idx)['duration_s'])
+    t1 = float(base['t1'])
+    side = _OPPOSITE_SIDE[desvio_side]
+    cuts = []
+    for off in offsets:
+        start = t1 + off
+        end = start + duration
+        if end > clip_duration:
+            continue
+        cuts.append({'offset': off, 'start': round(start, 3), 'end': round(end, 3),
+                     'event_type': 'retorno', 'side': side})
+    return {'found': bool(cuts), 'mode': 'return_turn', 'has_vertical': True,
+            'event_type': 'retorno', 'side': side, 'desvio_side': desvio_side,
+            't1': round(t1, 3), 't2': base.get('t2'), 'duration_s': round(clip_duration, 3),
+            'label_source': base.get('label_source') or 'imu', 'confidence': base.get('confidence'),
+            'cuts': cuts,
+            'message': None if cuts else 'janelas de retorno passam do fim do clipe'}
+
+
+def export_return_turn_set(indices, out_dir=None, verbose=False):
+    """Export each return-turn window as its own cut folder (video, sensors, cut_info.json)."""
+    import csv
+    out_dir = out_dir or RETURN_TURN_EXPORTS_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    fieldnames = ['output_folder', 'source_display', 'desvio_side', 'side', 'offset_s',
+                  'start', 'end', 't1', 't2', 'label_source', 'status']
+    rows = []
+    n_ok = n_skip = n_fail = 0
+    for idx in indices:
+        display = CLIPS[idx]
+        sug = suggest_return_turn_cuts(idx)
+        if not sug.get('found'):
+            rows.append({'source_display': display, 'status': f"skipped: {sug.get('message', '')}"})
+            n_skip += 1
+            if verbose:
+                print(f"  [skip] {display}: {sug.get('message', '')}")
+            continue
+        for cut in sug['cuts']:
+            name = f"{_safe_clip_name(display)}_retorno_{int(round(cut['offset'] * 1000))}ms"
+            folder = os.path.join(out_dir, name)
+            row = {'output_folder': name, 'source_display': display,
+                   'desvio_side': sug['desvio_side'], 'side': cut['side'], 'offset_s': cut['offset'],
+                   'start': f"{cut['start']:.3f}", 'end': f"{cut['end']:.3f}",
+                   't1': sug['t1'], 't2': sug['t2'], 'label_source': sug['label_source']}
+            if os.path.isdir(folder):
+                shutil.rmtree(folder, ignore_errors=True)
+            os.makedirs(folder)
+            try:
+                _ffmpeg_cut(clip_video_path(idx), cut['start'], cut['end'],
+                            os.path.join(folder, name + '.mp4'))
+            except Exception as e:
+                shutil.rmtree(folder, ignore_errors=True)
+                row['status'] = f'ffmpeg_error: {e}'
+                rows.append(row)
+                n_fail += 1
+                continue
+            try:
+                save_sensor_data(idx, cut['start'], cut['end'], folder)
+                row['status'] = 'ok'
+            except Exception as e:
+                row['status'] = f'ok_no_sensor: {e}'
+            info = {'source_display': display, 'mode': 'return_turn', 'event_type': 'retorno',
+                    'side': cut['side'], 'desvio_side': sug['desvio_side'], 'offset_s': cut['offset'],
+                    'start': cut['start'], 'end': cut['end'], 't1': sug['t1'], 't2': sug['t2'],
+                    'label_source': sug['label_source']}
+            with open(os.path.join(folder, 'cut_info.json'), 'w', encoding='utf-8') as f:
+                json.dump(info, f, indent=2, ensure_ascii=False)
+            rows.append(row)
+            n_ok += 1
+            if verbose:
+                print(f"  [ok]   {name}: {cut['start']:.2f}-{cut['end']:.2f}s side={cut['side']}")
+    csv_path = os.path.join(out_dir, 'sources.csv')
+    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+        w.writeheader()
+        w.writerows(rows)
+    return {'ok': n_ok, 'skipped': n_skip, 'failed': n_fail, 'total': len(indices),
+            'out_dir': out_dir, 'csv_path': csv_path}
+
+
 def _step_rhythm(amag, fps):
     """Per-window step-cadence strength along the clip.
 
@@ -4753,6 +4852,12 @@ def api_suggest(idx):
         return jsonify(_suggestion_with_ssim(idx, suggest_trim_cut(idx), threshold=threshold, metric=metric))
     # Only 'walking' remains (the old 'vertical' suggestion was retired).
     return jsonify(_suggestion_with_ssim(idx, suggest_crop(idx, 'walking'), threshold=threshold, metric=metric))
+
+@app.route('/api/return-turn-cuts/<int:idx>')
+def api_return_turn_cuts(idx):
+    if idx < 0 or idx >= len(CLIPS):
+        return jsonify({'found': False}), 404
+    return jsonify(suggest_return_turn_cuts(idx))
 
 @app.route('/api/compass-turn/<int:idx>')
 def api_compass_turn(idx):
