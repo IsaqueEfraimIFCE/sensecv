@@ -14,9 +14,12 @@ import io
 import json
 import logging
 import random
+import ssl
 import threading
 import time
 from typing import Mapping, Optional
+
+import httplib2
 
 log = logging.getLogger(__name__)
 
@@ -25,6 +28,14 @@ FOLDER_MIME = "application/vnd.google-apps.folder"
 MAX_ATTEMPTS = 6
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_REASONS = {"rateLimitExceeded", "userRateLimitExceeded", "backendError"}
+# Socket-level failures never reach HttpError: read timeouts, resets, TLS drops.
+_NETWORK_ERRORS = (TimeoutError, ConnectionError, ssl.SSLError, httplib2.HttpLib2Error)
+
+
+def _backoff(attempt: int, why: str) -> None:
+    delay = min(60.0, 2 ** attempt) + random.random()
+    log.warning("drive %s; retry %d in %.1fs", why, attempt + 1, delay)
+    time.sleep(delay)
 
 
 class DriveQuotaError(RuntimeError):
@@ -87,9 +98,11 @@ class DriveClient:
                 transient = status in _RETRY_STATUSES or reason in _RETRY_REASONS
                 if not transient or attempt == MAX_ATTEMPTS - 1:
                     raise
-                delay = min(60.0, 2 ** attempt) + random.random()
-                log.warning("drive %s (%s); retry %d in %.1fs", status, reason, attempt + 1, delay)
-                time.sleep(delay)
+                _backoff(attempt, f"{status} {reason}".strip())
+            except _NETWORK_ERRORS as error:
+                if attempt == MAX_ATTEMPTS - 1:
+                    raise
+                _backoff(attempt, type(error).__name__)
 
     # -- queries -----------------------------------------------------------
     def _find(self, name: str, parent_id: str, folder_only: bool = False) -> Optional[str]:
