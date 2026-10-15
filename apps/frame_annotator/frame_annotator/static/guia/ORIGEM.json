@@ -1,0 +1,68 @@
+{
+ "livre-1.jpg": {
+  "source": "E1_IFCE_corridors/0207_04_0074.jpg",
+  "kind": "real"
+ },
+ "livre-2.jpg": {
+  "source": "E1_IFCE_corridors/0207_23_0067.jpg",
+  "kind": "real"
+ },
+ "esquerda-1.jpg": {
+  "source": "E4_UFC_Benfica_corridors/2407_09_0015.jpg",
+  "kind": "real"
+ },
+ "esquerda-2.jpg": {
+  "source": "E1_IFCE_corridors/0206_13_0015.jpg",
+  "kind": "real"
+ },
+ "direita-1.jpg": {
+  "source": "E6_UFC_Pici_library/2108_07_0015.jpg",
+  "kind": "real"
+ },
+ "direita-2.jpg": {
+  "source": "E1_IFCE_corridors/0206_20_0015.jpg",
+  "kind": "real"
+ },
+ "parar-1.jpg": {
+  "source": "E1_IFCE_corridors/1006_62_0015.jpg",
+  "kind": "real"
+ },
+ "parar-2.jpg": {
+  "source": "E6_UFC_Pici_library/1908_41_0030.jpg",
+  "kind": "real"
+ },
+ "parar-3.jpg": {
+  "source": "E3_BECE_corridors/2106_39_0015.jpg",
+  "kind": "real"
+ },
+ "limite-1.jpg": {
+  "source": "E2_IFCE_library/0906_03_0022.jpg",
+  "kind": "real",
+  "dataset_label": [
+   "obstacle",
+   "right"
+  ],
+  "inspector_note": "small box on floor left, ~1.8 m"
+ },
+ "limite-2.jpg": {
+  "source": "E1_IFCE_corridors/0606_03_0004.jpg",
+  "kind": "real",
+  "dataset_label": [
+   "obstacle",
+   "left"
+  ],
+  "inspector_note": "yellow wet-floor sign near right wall, ~3 m"
+ },
+ "inutil-borrada.jpg": {
+  "source": "E1_IFCE_corridors/0207_04_0074.jpg",
+  "kind": "simulated from a real frame"
+ },
+ "inutil-escura.jpg": {
+  "source": "E1_IFCE_corridors/0207_04_0074.jpg",
+  "kind": "simulated from a real frame"
+ },
+ "inutil-chao.jpg": {
+  "source": "E1_IFCE_corridors/0207_04_0074.jpg",
+  "kind": "simulated from a real frame"
+ }
+}

@@ -1,137 +1,347 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Frame Annotator</title>
+<title>Anotador de quadros</title>
 <style>
 :root{--bg:#10141a;--panel:#18202a;--line:#2b3644;--text:#e6edf5;--dim:#8d9bad;
   --free:#2e9e5b;--obst:#d9822b;--left:#3b82f6;--right:#a855f7;--none:#6b7787;--bad:#e5484d;--sel:#f5d90a}
 @media (prefers-color-scheme: light){:root{--bg:#f4f6f9;--panel:#fff;--line:#d5dbe3;--text:#18202a;--dim:#5d6b7c}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,sans-serif}
-header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
+header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 header h1{font-size:16px;margin:0;flex:1}
 main{padding:16px;max-width:1500px;margin:0 auto}
 button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
 button:hover{border-color:var(--sel)}
 button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
 .hidden{display:none!important}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:420px;margin:60px auto}
-input[type=password],input[type=text]{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.login{max-width:420px;margin:60px auto}
+input[type=password]{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
 table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
 tr.row{cursor:pointer}tr.row:hover{background:var(--panel)}
 .bar{height:8px;background:var(--line);border-radius:4px;min-width:120px;overflow:hidden}
 .bar>i{display:block;height:100%;background:var(--free)}
-.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;position:sticky;top:50px;z-index:4}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;position:sticky;top:52px;z-index:4}
 .toolbar .grp{display:flex;gap:6px;align-items:center;padding-right:12px;border-right:1px solid var(--line)}
 .toolbar .grp:last-child{border:none}
-@media (max-width:700px){.toolbar{position:static}}
 .toolbar label{color:var(--dim);font-size:13px}
+@media (max-width:700px){.toolbar{position:static}}
 .btn-free{border-color:var(--free)}.btn-obst{border-color:var(--obst)}.btn-left{border-color:var(--left)}
 .btn-right{border-color:var(--right)}.btn-none{border-color:var(--none)}.btn-bad{border-color:var(--bad)}
 #grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;user-select:none}
 .tile{position:relative;border:3px solid var(--line);border-radius:6px;overflow:hidden;background:#000;cursor:pointer}
-.tile .img{width:100%;aspect-ratio:4/3;background-repeat:no-repeat}
+.tile .img{width:100%;aspect-ratio:1/1;background-repeat:no-repeat}
 .tile .meta{display:flex;gap:4px;align-items:center;justify-content:space-between;padding:3px 6px;font-size:12px;background:var(--panel)}
 .tile.sel{outline:3px solid var(--sel);outline-offset:-3px}
 .tile.l-free{border-color:var(--free)}.tile.l-obst{border-color:var(--obst)}
 .tile.l-bad{border-color:var(--bad)}
 .tile.l-bad .img{opacity:.35}
-.chip{padding:0 6px;border-radius:9px;font-size:11px;color:#fff}
+.chip{padding:0 6px;border-radius:9px;font-size:11px;color:#fff;white-space:nowrap}
 .c-free{background:var(--free)}.c-obst{background:var(--obst)}.c-left{background:var(--left)}
 .c-right{background:var(--right)}.c-none{background:var(--none)}.c-bad{background:var(--bad)}.c-miss{background:var(--line);color:var(--dim)}
 .help{color:var(--dim);font-size:13px;margin:6px 0}
 .slider{display:flex;gap:10px;align-items:center;margin:8px 0}
 .slider input{flex:1}
-#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bad);color:#fff;padding:8px 14px;border-radius:6px}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bad);color:#fff;padding:8px 14px;border-radius:6px;max-width:90vw}
+/* guide */
+.guide{max-width:1100px;margin:0 auto}
+.guide h2{margin:26px 0 8px;font-size:20px}
+.guide h3{margin:18px 0 6px;font-size:16px}
+.guide ol,.guide ul{padding-left:22px}
+.guide li{margin:4px 0}
+.guide .callout{border-left:4px solid var(--sel);padding:8px 12px;background:var(--panel);border-radius:0 8px 8px 0;margin:10px 0}
+.classes{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin:12px 0}
+.classes .card{border-top:4px solid var(--line)}
+.classes .k-free{border-top-color:var(--free)}.classes .k-left{border-top-color:var(--left)}
+.classes .k-right{border-top-color:var(--right)}.classes .k-stop{border-top-color:var(--obst)}
+.classes .k-bad{border-top-color:var(--bad)}
+.classes h3{margin:0 0 6px}
+.examples{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin:12px 0}
+.example{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.example img{display:block;width:100%;height:auto;background:#000}
+.example .cap{padding:10px 12px;font-size:14px}
+.example .cap .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 6px;font:12px monospace}
 </style>
 </head>
 <body>
 <header>
-  <h1 id="title">Frame Annotator</h1>
+  <h1 id="title">Anotador de quadros</h1>
   <span id="who" class="help"></span>
-  <button id="back" class="hidden">&larr; Clips</button>
-  <button id="next" class="hidden">Next unfinished &rarr;</button>
+  <button id="btn-guide" class="hidden">Guia de anotação</button>
+  <button id="back" class="hidden">&larr; Clipes</button>
+  <button id="next" class="hidden">Próximo pendente &rarr;</button>
+  <button id="logout" class="hidden">Sair</button>
 </header>
 <main>
-  <section id="login" class="card hidden">
-    <h2>Sign in</h2>
-    <p class="help">Paste the private token you were given.</p>
-    <input id="token" type="password" autocomplete="off" placeholder="Annotator token">
-    <p><button id="signin" class="primary">Sign in</button></p>
+  <section id="login" class="card login hidden">
+    <h2>Entrar</h2>
+    <p class="help">Abra o link pessoal que você recebeu ou cole aqui o seu token.</p>
+    <input id="token" type="password" autocomplete="off" placeholder="Token pessoal" aria-label="Token pessoal">
+    <p><button id="signin" class="primary">Entrar</button></p>
   </section>
 
   <section id="list" class="hidden">
-    <p class="help">Your work is saved automatically. Stop and resume any time: every frame must end up labelled or flagged unusable.</p>
-    <label class="help"><input type="checkbox" id="only-open"> only unfinished clips</label>
-    <table><thead><tr><th>Location</th><th>Clip</th><th>Frames</th><th>Progress</th></tr></thead><tbody id="rows"></tbody></table>
+    <div class="card" style="margin-bottom:12px">
+      <strong id="overall"></strong>
+      <p class="help">Seu trabalho é salvo automaticamente. Você pode parar e continuar quando quiser: cada quadro precisa terminar rotulado ou marcado como inutilizável. Em dúvida? Abra o <a href="#" id="link-guide">guia de anotação</a>.</p>
+    </div>
+    <label class="help"><input type="checkbox" id="only-open"> mostrar só os clipes não concluídos</label>
+    <table><thead><tr><th>Local</th><th>Clipe</th><th>Quadros</th><th>Progresso</th></tr></thead><tbody id="rows"></tbody></table>
   </section>
 
   <section id="clip" class="hidden">
     <div class="help" id="clip-info"></div>
     <div class="toolbar">
-      <div class="grp"><label>Obstacle</label>
-        <button class="btn-free" data-act="obstacle:free_path">Free path (1)</button>
-        <button class="btn-obst" data-act="obstacle:obstacle">Obstacle (2)</button></div>
-      <div class="grp"><label>Deviation</label>
-        <button class="btn-left" data-act="deviation:left">Left (Q)</button>
-        <button class="btn-none" data-act="deviation:none">None (W)</button>
-        <button class="btn-right" data-act="deviation:right">Right (E)</button></div>
-      <div class="grp"><button class="btn-bad" data-act="unusable:true">Unusable (U)</button>
-        <button data-act="unusable:false">Clear flag</button></div>
-      <div class="grp"><button id="sel-all">Select all (A)</button><button id="sel-none">Clear selection (Esc)</button></div>
+      <div class="grp"><label>Obstáculo</label>
+        <button class="btn-free" data-act="obstacle:free_path">Caminho livre (1)</button>
+        <button class="btn-obst" data-act="obstacle:obstacle">Obstáculo (2)</button></div>
+      <div class="grp"><label>Desvio</label>
+        <button class="btn-left" data-act="deviation:left">Esquerda (Q)</button>
+        <button class="btn-none" data-act="deviation:none">Nenhum (W)</button>
+        <button class="btn-right" data-act="deviation:right">Direita (E)</button></div>
+      <div class="grp"><button class="btn-bad" data-act="unusable:true">Inutilizável (U)</button>
+        <button data-act="unusable:false">Desfazer inutilizável</button></div>
+      <div class="grp"><button id="sel-all">Selecionar tudo (A)</button><button id="sel-none">Limpar seleção (Esc)</button></div>
       <span id="sel-info" class="help"></span>
     </div>
-    <div class="slider"><label class="help" for="r-start">From</label><input type="range" id="r-start" min="0" value="0">
-      <label class="help" for="r-end">To</label><input type="range" id="r-end" min="0" value="0"></div>
-    <p class="help">Click a frame, drag across frames, or shift-click to select a range, then set its labels.
-      <b>Deviation left</b> = obstacle on the right (deviate left); <b>right</b> = obstacle on the left;
-      <b>none</b> = free corridor or a stop. Free path always means deviation none.
-      Obstacle means an obstacle in the corridor within about 3 m.</p>
+    <div class="slider"><label class="help" for="r-start">Início</label><input type="range" id="r-start" min="0" value="0">
+      <label class="help" for="r-end">Fim</label><input type="range" id="r-end" min="0" value="0"></div>
+    <p class="help">Clique em um quadro, arraste sobre vários ou use Shift+clique para selecionar um trecho; depois escolha os rótulos.
+      Dúvidas sobre os critérios? Veja o <a href="#" id="link-guide-2">guia de anotação</a>.</p>
     <div id="grid"></div>
+  </section>
+
+  <section id="guide" class="guide hidden">
+    <h2 style="margin-top:0">Guia de anotação</h2>
+    <p>Você vai classificar, <strong>quadro a quadro</strong>, imagens de corredores filmadas por uma pessoa caminhando com um celular.
+      Suas anotações servem para treinar e avaliar um sistema de orientação para pessoas com deficiência visual.
+      Cada quadro é avaliado <strong>individualmente</strong>, sem ver rótulos prévios.</p>
+
+    <h2>Como anotar, em 5 passos</h2>
+    <ol>
+      <li><strong>Escolha um clipe</strong> na lista (o progresso de cada um aparece ao lado).</li>
+      <li><strong>Veja os quadros</strong> em ordem, do início ao fim do trecho filmado.</li>
+      <li><strong>Selecione quadros</strong>: clique em um, arraste sobre vários, use <kbd>Shift</kbd>+clique para um trecho, ou as barras
+        <em>Início</em> e <em>Fim</em>. <kbd>A</kbd> seleciona o clipe inteiro.</li>
+      <li><strong>Defina os rótulos</strong> com os botões (ou atalhos). Todos os quadros selecionados recebem o rótulo.</li>
+      <li>Quando <strong>todos</strong> os quadros estiverem marcados, aparece “clipe completo”. Use <em>Próximo pendente</em>.</li>
+    </ol>
+    <div class="callout">O trabalho é <strong>salvo automaticamente</strong> a cada ação. Para corrigir, basta selecionar os quadros e rotular de novo.
+      Você pode fechar a página e continuar depois pelo mesmo link.</div>
+
+    <h2>As duas perguntas de cada quadro</h2>
+    <div class="card">
+      <h3>1. Obstáculo — há algo no caminho, a até cerca de 3 metros?</h3>
+      <p>Considere pessoas, objetos, móveis, lixeiras, carrinhos, portas, paredes ou qualquer coisa que esteja <strong>no corredor por onde se caminha</strong>
+        e que não esteja a mais de uns 3 m de distância.</p>
+      <ul>
+        <li><strong>Obstáculo</strong>: existe algo assim.</li>
+        <li><strong>Caminho livre</strong>: o corredor à frente está sempre livre. Objetos muito distantes, no fundo do corredor, ou claramente fora do caminho
+          (encostados na parede, fora da faixa de passagem) <em>não</em> contam.</li>
+      </ul>
+      <h3>2. Desvio — só quando há obstáculo: para onde quem caminha deve se desviar?</h3>
+      <ul>
+        <li><strong>Esquerda</strong>: o obstáculo está do lado <em>direito</em> do corredor; é preciso desviar para a esquerda.</li>
+        <li><strong>Direita</strong>: o obstáculo está do lado <em>esquerdo</em>; é preciso desviar para a direita.</li>
+        <li><strong>Nenhum</strong>: não há como desviar — parede, beco sem saída, porta fechada ou obstáculo tão grande que ocupa o corredor (é hora de <em>parar</em>).</li>
+      </ul>
+      <p class="help">Com <strong>Caminho livre</strong>, o desvio é sempre <em>Nenhum</em> e o app preenche isso sozinho.</p>
+    </div>
+
+    <h2>As quatro classes</h2>
+    <div class="classes">
+      <div class="card k-free"><h3>Livre</h3>
+        <p><span class="chip c-free">livre</span> <span class="chip c-none">nenhum</span></p>
+        <p>Corredor desimpedido. Nada no caminho a até ~3 m.</p></div>
+      <div class="card k-left"><h3>Desvio à esquerda</h3>
+        <p><span class="chip c-obst">obstáculo</span> <span class="chip c-left">esquerda</span></p>
+        <p>Obstáculo no lado <strong>direito</strong>, ainda dá para passar pela esquerda.</p></div>
+      <div class="card k-right"><h3>Desvio à direita</h3>
+        <p><span class="chip c-obst">obstáculo</span> <span class="chip c-right">direita</span></p>
+        <p>Obstáculo no lado <strong>esquerdo</strong>, ainda dá para passar pela direita.</p></div>
+      <div class="card k-stop"><h3>Parar</h3>
+        <p><span class="chip c-obst">obstáculo</span> <span class="chip c-none">nenhum</span></p>
+        <p>Parede, porta fechada ou obstáculo/pessoas ocupando o corredor: não dá para passar.</p></div>
+    </div>
+
+    <h2>Quadro inutilizável</h2>
+    <div class="card k-bad">
+      <p>Marque <span class="chip c-bad">inutilizável</span> quando <strong>não for possível decidir com segurança</strong>, por exemplo:</p>
+      <ul>
+        <li>imagem muito <strong>borrada</strong> (movimento brusco);</li>
+        <li>tão <strong>escura</strong> que não se enxerga o corredor;</li>
+        <li>câmera apontada <strong>só para o chão</strong> (ou só teto/parede), sem referência do corredor;</li>
+        <li>lente <strong>coberta</strong> ou inclinação tão extrema que não dá para saber o que é esquerda e direita.</li>
+      </ul>
+      <p>Esses quadros não precisam dos outros rótulos. Use com parcimônia: <strong>se dá para decidir, rotule normalmente</strong>.</p>
+    </div>
+
+    <h2>Dicas importantes</h2>
+    <ul>
+      <li><strong>Imagem inclinada?</strong> Muitas imagens estão giradas. Ache o chão e o teto (rejuntes do piso, lâmpadas, rodapés) e julgue esquerda e direita
+        do ponto de vista de quem caminha: olhando para o fundo do corredor, com o chão embaixo.</li>
+      <li><strong>Distância:</strong> estime pelo piso, pelas portas e pela largura típica do corredor (2 a 3 m).</li>
+      <li><strong>Cada quadro é independente.</strong> Um mesmo clipe pode começar livre e passar a ter obstáculo: rotule por trechos usando a seleção.</li>
+      <li>Não há resposta “do sistema” para seguir: <strong>decida pelo que você vê</strong>.</li>
+    </ul>
+
+    <h2>Atalhos</h2>
+    <table style="max-width:560px">
+      <tr><td><kbd>1</kbd></td><td>Caminho livre</td><td><kbd>Q</kbd></td><td>Desvio: esquerda</td></tr>
+      <tr><td><kbd>2</kbd></td><td>Obstáculo</td><td><kbd>W</kbd></td><td>Desvio: nenhum</td></tr>
+      <tr><td><kbd>U</kbd></td><td>Inutilizável</td><td><kbd>E</kbd></td><td>Desvio: direita</td></tr>
+      <tr><td><kbd>A</kbd></td><td>Selecionar tudo</td><td><kbd>Esc</kbd></td><td>Limpar seleção</td></tr>
+    </table>
+
+    <h2>Exemplos</h2>
+    <p class="help">Imagens do próprio conjunto de dados. Os exemplos de “inutilizável” são <strong>simulados</strong> a partir de um quadro real.</p>
+
+    <h3>Caminho livre</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/livre-1.jpg" alt="Corredor comprido e desimpedido" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-free">livre</span><span class="chip c-none">nenhum</span></div>
+        Corredor desimpedido até o fundo. Nada a menos de 3 m.</div></div>
+      <div class="example"><img src="/guia/livre-2.jpg" alt="Corredor com extintor fixado na parede" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-free">livre</span><span class="chip c-none">nenhum</span></div>
+        O extintor está fixado na parede, fora da faixa de passagem: <strong>não é obstáculo</strong>.</div></div>
+    </div>
+
+    <h3>Desvio à esquerda (obstáculo no lado direito)</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/esquerda-1.jpg" alt="Pessoa de costas no lado direito do corredor" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-left">esquerda</span></div>
+        Pessoa bem perto, no lado direito. Há espaço pela esquerda: desvie para a esquerda.</div></div>
+      <div class="example"><img src="/guia/esquerda-2.jpg" alt="Objeto vermelho no chão, junto à parede direita" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-left">esquerda</span></div>
+        Objeto vermelho no chão, junto à parede direita, a poucos metros: desvie para a esquerda.</div></div>
+    </div>
+
+    <h3>Desvio à direita (obstáculo no lado esquerdo)</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/direita-1.jpg" alt="Pessoa de pé junto às estantes, à esquerda" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-right">direita</span></div>
+        Pessoa junto às estantes, no lado esquerdo e perto: desvie para a direita.</div></div>
+      <div class="example"><img src="/guia/direita-2.jpg" alt="Placa no chão, à esquerda do corredor" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-right">direita</span></div>
+        Placa no chão, à esquerda do eixo do corredor: desvie para a direita.</div></div>
+    </div>
+
+    <h3>Parar (obstáculo, sem desvio possível)</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/parar-1.jpg" alt="Parede de cobogós bloqueando o caminho" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-none">nenhum</span></div>
+        Parede à frente: não há por onde passar. Parar.</div></div>
+      <div class="example"><img src="/guia/parar-2.jpg" alt="Divisória e porta fechada" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-none">nenhum</span></div>
+        Divisória/porta fechada ocupando todo o campo de visão: parar.</div></div>
+      <div class="example"><img src="/guia/parar-3.jpg" alt="Pessoa parada no meio do corredor entre estantes" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-none">nenhum</span></div>
+        Pessoa ocupando o corredor entre as estantes, sem espaço para passar: parar.</div></div>
+    </div>
+
+    <h3>Casos que merecem atenção</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/limite-1.jpg" alt="Caixa pequena no chão, à esquerda" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-obst">obstáculo</span><span class="chip c-right">direita</span></div>
+        Objetos <strong>pequenos e baixos</strong> também contam. Caixa no chão, à esquerda, a cerca de 1,8 m: desvie para a direita.</div></div>
+      <div class="example"><img src="/guia/limite-2.jpg" alt="Placa amarela de piso molhado junto à parede direita" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-miss">limítrofe</span></div>
+        Placa amarela junto à parede direita, a cerca de <strong>3 m</strong>: está no limite. Decida pelo que parecer mais provável
+        e siga em frente; casos assim são esperados.</div></div>
+    </div>
+
+    <h3>Quadros inutilizáveis (exemplos simulados)</h3>
+    <div class="examples">
+      <div class="example"><img src="/guia/inutil-borrada.jpg" alt="Corredor muito borrado" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-bad">inutilizável</span></div>
+        Imagem tão borrada que não dá para identificar obstáculos.</div></div>
+      <div class="example"><img src="/guia/inutil-escura.jpg" alt="Imagem praticamente preta" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-bad">inutilizável</span></div>
+        Escuridão: não se enxerga o corredor.</div></div>
+      <div class="example"><img src="/guia/inutil-chao.jpg" alt="Câmera apontada só para o chão" loading="lazy">
+        <div class="cap"><div class="chips"><span class="chip c-bad">inutilizável</span></div>
+        Câmera apontada só para o chão: sem referência do que há à frente.</div></div>
+    </div>
+
+    <h2>Antes de seguir para o próximo clipe</h2>
+    <ul>
+      <li>Nenhum quadro está com <span class="chip c-miss">pendente</span>, <span class="chip c-miss">obst.?</span> ou <span class="chip c-miss">desv.?</span>.</li>
+      <li>O contador mostra “clipe completo”.</li>
+    </ul>
+    <p><button id="guide-done" class="primary">Entendi, começar a anotar</button></p>
   </section>
 </main>
 <div id="toast" class="hidden"></div>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const state = { clips: [], clip: null, labels: [], sel: null, anchor: null, dragging: false };
+const GUIDE_KEY = "guia_visto_v1";
+const state = { clips: [], clip: null, labels: [], sel: null, anchor: null, dragging: false, view: "login", returnTo: "list" };
 
 function toast(message) {
   const el = $("toast");
   el.textContent = message;
   el.classList.remove("hidden");
-  setTimeout(() => el.classList.add("hidden"), 3500);
+  setTimeout(() => el.classList.add("hidden"), 4000);
 }
 
 async function api(path, options) {
   const response = await fetch(path, options);
-  if (response.status === 401) { show("login"); throw new Error("signed out"); }
+  if (response.status === 401 && path !== "/api/login") { show("login"); throw new Error("Sessão encerrada."); }
   const body = await response.json();
-  if (!response.ok) throw new Error(body.error || response.statusText);
+  if (!response.ok) throw new Error(body.error || "Erro inesperado.");
   return body;
 }
 
 function show(view) {
-  for (const id of ["login", "list", "clip"]) $(id).classList.toggle("hidden", id !== view);
-  $("back").classList.toggle("hidden", view !== "clip");
+  state.view = view;
+  for (const id of ["login", "list", "clip", "guide"]) $(id).classList.toggle("hidden", id !== view);
+  const signedIn = view !== "login";
+  $("back").classList.toggle("hidden", view !== "clip" && view !== "guide");
   $("next").classList.toggle("hidden", view !== "clip");
+  $("btn-guide").classList.toggle("hidden", !signedIn || view === "guide");
+  $("logout").classList.toggle("hidden", !signedIn);
+  $("who").classList.toggle("hidden", !signedIn);
+  window.scrollTo(0, 0);
 }
 
-// ---- clip list ----
+function guideSeen() { try { return localStorage.getItem(GUIDE_KEY) === "1"; } catch (e) { return false; } }
+function markGuideSeen() { try { localStorage.setItem(GUIDE_KEY, "1"); } catch (e) { /* private mode */ } }
+
+function openGuide() {
+  state.returnTo = state.view === "clip" ? "clip" : "list";
+  $("title").textContent = "Guia de anotação";
+  show("guide");
+}
+
+function closeGuide() {
+  markGuideSeen();
+  if (state.returnTo === "clip" && state.clip) { $("title").textContent = `${state.clip.location} / ${state.clip.clip_id}`; show("clip"); }
+  else loadList();
+}
+
+// ---- lista de clipes ----
 async function loadList() {
   state.clips = (await api("/api/clips")).clips;
   renderList();
   show("list");
-  $("title").textContent = "Frame Annotator";
+  $("title").textContent = "Anotador de quadros";
 }
 
 function renderList() {
   const onlyOpen = $("only-open").checked;
   const rows = $("rows");
   rows.replaceChildren();
+  const total = state.clips.reduce((sum, c) => sum + c.frame_count, 0);
+  const done = state.clips.reduce((sum, c) => sum + c.labelled, 0);
+  const clipsDone = state.clips.filter((c) => c.labelled >= c.frame_count).length;
+  $("overall").textContent = `Progresso total: ${done.toLocaleString("pt-BR")} de ${total.toLocaleString("pt-BR")} quadros ` +
+    `(${total ? Math.round((100 * done) / total) : 0}%) — ${clipsDone} de ${state.clips.length} clipes concluídos`;
   for (const clip of state.clips) {
     if (onlyOpen && clip.labelled >= clip.frame_count) continue;
     const tr = document.createElement("tr");
@@ -156,7 +366,7 @@ function renderList() {
   }
 }
 
-// ---- clip view ----
+// ---- clipe ----
 function expandRuns(frameCount, runs) {
   const labels = new Array(frameCount).fill(null);
   for (const [start, end, obstacle, deviation, unusable] of runs)
@@ -215,6 +425,8 @@ function chip(text, cls) {
   return span;
 }
 
+const DEVIATION_TEXT = { left: "esquerda", right: "direita", none: "nenhum" };
+
 function renderClip() {
   const [lo, hi] = state.sel || [-1, -2];
   const tiles = $("grid").children;
@@ -227,20 +439,20 @@ function renderClip() {
     index.textContent = "#" + i;
     meta.appendChild(index);
     const chips = document.createElement("span");
-    if (!label) chips.appendChild(chip("todo", "c-miss"));
-    else if (label.unusable) { tile.classList.add("l-bad"); chips.appendChild(chip("unusable", "c-bad")); }
+    if (!label) chips.appendChild(chip("pendente", "c-miss"));
+    else if (label.unusable) { tile.classList.add("l-bad"); chips.appendChild(chip("inutilizável", "c-bad")); }
     else {
-      if (label.obstacle === "free_path") { tile.classList.add("l-free"); chips.appendChild(chip("free", "c-free")); }
-      else if (label.obstacle === "obstacle") { tile.classList.add("l-obst"); chips.appendChild(chip("obstacle", "c-obst")); }
-      else chips.appendChild(chip("obst?", "c-miss"));
-      if (label.deviation) chips.appendChild(chip(label.deviation, "c-" + label.deviation));
-      else chips.appendChild(chip("dev?", "c-miss"));
+      if (label.obstacle === "free_path") { tile.classList.add("l-free"); chips.appendChild(chip("livre", "c-free")); }
+      else if (label.obstacle === "obstacle") { tile.classList.add("l-obst"); chips.appendChild(chip("obstáculo", "c-obst")); }
+      else chips.appendChild(chip("obst.?", "c-miss"));
+      if (label.deviation) chips.appendChild(chip(DEVIATION_TEXT[label.deviation], "c-" + label.deviation));
+      else chips.appendChild(chip("desv.?", "c-miss"));
     }
     meta.appendChild(chips);
   }
   const done = state.labels.filter((l) => l && (l.unusable || (l.obstacle && l.deviation))).length;
-  $("clip-info").textContent = `${done}/${state.clip.frame_count} frames done` + (done === state.clip.frame_count ? " — clip complete" : "");
-  $("sel-info").textContent = state.sel ? `Selected frames ${lo}–${hi} (${hi - lo + 1})` : "No frames selected";
+  $("clip-info").textContent = `${done}/${state.clip.frame_count} quadros prontos` + (done === state.clip.frame_count ? " — clipe completo" : "");
+  $("sel-info").textContent = state.sel ? `Quadros ${lo}–${hi} selecionados (${hi - lo + 1})` : "Nenhum quadro selecionado";
   $("r-start").value = Math.max(lo, 0);
   $("r-end").value = Math.max(hi, 0);
 }
@@ -251,7 +463,7 @@ function setSelection(a, b) {
 }
 
 async function applyLabel(fields) {
-  if (!state.sel) { toast("Select some frames first"); return; }
+  if (!state.sel) { toast("Selecione alguns quadros primeiro."); return; }
   const [start, end] = state.sel;
   try {
     const result = await api(`/api/clips/${encodeURIComponent(state.clip.clip_id)}/labels`, {
@@ -270,7 +482,7 @@ function parseAct(act) {
   return { [field]: field === "unusable" ? value === "true" : value };
 }
 
-// ---- events ----
+// ---- eventos ----
 $("grid").addEventListener("mousedown", (event) => {
   const tile = event.target.closest(".tile");
   if (!tile) return;
@@ -293,7 +505,7 @@ for (const id of ["r-start", "r-end"])
   $(id).addEventListener("input", () => setSelection(Number($("r-start").value), Number($("r-end").value)));
 
 window.addEventListener("keydown", (event) => {
-  if ($("clip").classList.contains("hidden") || event.target.tagName === "INPUT") return;
+  if (state.view !== "clip" || event.target.tagName === "INPUT" || event.ctrlKey || event.metaKey || event.altKey) return;
   const keys = { "1": "obstacle:free_path", "2": "obstacle:obstacle", q: "deviation:left",
     w: "deviation:none", e: "deviation:right", u: "unusable:true" };
   const key = event.key.toLowerCase();
@@ -302,35 +514,44 @@ window.addEventListener("keydown", (event) => {
   else if (key === "escape") { state.sel = null; renderClip(); }
 });
 
-$("back").addEventListener("click", loadList);
+$("back").addEventListener("click", () => { if (state.view === "guide") closeGuide(); else loadList(); });
+$("btn-guide").addEventListener("click", openGuide);
+$("guide-done").addEventListener("click", closeGuide);
+for (const id of ["link-guide", "link-guide-2"])
+  $(id).addEventListener("click", (event) => { event.preventDefault(); openGuide(); });
 $("next").addEventListener("click", async () => {
   const clips = (await api("/api/clips")).clips;
   const pending = clips.filter((c) => c.labelled < c.frame_count);
   const here = clips.findIndex((c) => c.clip_id === state.clip.clip_id);
   const next = pending.find((c) => clips.indexOf(c) > here) || pending[0];
-  if (next) openClip(next.clip_id); else toast("All clips are complete — thank you!");
+  if (next) openClip(next.clip_id); else toast("Todos os clipes estão completos — obrigado!");
 });
 $("only-open").addEventListener("change", renderList);
+$("logout").addEventListener("click", async () => {
+  try { await api("/api/logout", { method: "POST" }); } catch (error) { /* already signed out */ }
+  show("login");
+});
 $("signin").addEventListener("click", async () => {
   try {
     await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: $("token").value }) });
     $("token").value = "";
     await start();
-  } catch (error) { toast("Invalid token"); }
+  } catch (error) { toast(error.message); }
 });
 
 async function start() {
   try {
     const invite = new URLSearchParams(location.hash.slice(1)).get("token");
-    if (invite) {  // invite link: /#token=...  (the hash never reaches the server)
+    if (invite) {  // link de convite: /#token=...  (o trecho após # nunca chega ao servidor)
       history.replaceState(null, "", location.pathname);
       await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: invite }) });
     }
     const me = await api("/api/me");
-    $("who").textContent = "Signed in as " + me.annotator;
-    await loadList();
+    $("who").textContent = "Conectado como " + me.annotator;
+    if (!guideSeen()) { state.returnTo = "list"; $("title").textContent = "Guia de anotação"; show("guide"); }
+    else await loadList();
   } catch (error) { show("login"); }
 }
 start();

@@ -211,6 +211,30 @@ def test_clip_ids_with_odd_characters_are_404_not_500(client):
         assert client.get(f"/sheet/{bad}/0", headers=auth("ana")).status_code == 404
 
 
+def test_guide_images_require_a_signed_in_annotator(client):
+    assert client.get("/guia/livre-1.jpg").status_code == 401
+
+    response = client.get("/guia/livre-1.jpg", headers=auth("ana"))
+
+    assert response.status_code == 200
+    assert response.mimetype == "image/jpeg"
+
+
+@pytest.mark.parametrize("name", ["nope.jpg", "ORIGEM.json", "livre-1.png", "..%2Fapp.jpg", "LIVRE-1.jpg"])
+def test_guide_route_serves_only_known_lowercase_jpegs(client, name):
+    assert client.get(f"/guia/{name}", headers=auth("ana")).status_code == 404
+
+
+def test_user_facing_errors_are_in_portuguese_and_do_not_echo_internals(client):
+    signed_out = client.get("/api/clips").get_json()["error"]
+    invalid = put(client, "ana", start=0, end=99, obstacle="obstacle").get_json()["error"]
+    unknown = client.get("/api/clips/nope", headers=auth("ana")).get_json()["error"]
+
+    assert "Sessão" in signed_out
+    assert invalid == "Seleção ou rótulo inválido."
+    assert unknown == "Clipe não encontrado."
+
+
 def test_only_the_index_page_is_served_unauthenticated(client):
     assert client.get("/").status_code == 200
     assert client.get("/static/index.html").status_code == 404

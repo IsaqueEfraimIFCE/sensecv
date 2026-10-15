@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import re
 import threading
 import time
 from collections import defaultdict
@@ -34,7 +35,14 @@ CSP = (
     "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 )
-UNREADABLE = "stored annotation is unreadable; please contact the administrator"
+GUIDE_DIR = STATIC_DIR / "guia"
+GUIDE_IMAGE = re.compile(r"^[a-z0-9-]+\.jpg$")
+
+# User-facing messages (the whole interface is in Portuguese).
+UNREADABLE = "As anotações salvas deste clipe estão ilegíveis. Avise o responsável."
+NOT_SIGNED_IN = "Sessão não iniciada. Abra o seu link pessoal ou informe o seu token."
+UNKNOWN_CLIP = "Clipe não encontrado."
+INVALID_SELECTION = "Seleção ou rótulo inválido."
 
 
 def _is_int(value) -> bool:
@@ -125,11 +133,11 @@ def create_app(
 
     @app.errorhandler(Throttled)
     def throttled(_):
-        return error(429, "too many failed attempts; try again in a minute")
+        return error(429, "Muitas tentativas incorretas. Tente novamente em 1 minuto.")
 
     @app.errorhandler(413)
     def too_large(_):
-        return error(413, "request body too large")
+        return error(413, "Requisição grande demais.")
 
     @app.after_request
     def secure_headers(response):
@@ -151,7 +159,7 @@ def create_app(
         token = body.get("token") if isinstance(body, dict) else None
         who = match_token(token)
         if who is None:
-            return error(401, "invalid token")
+            return error(401, "Token inválido.")
         response = jsonify({"annotator": who})
         response.set_cookie(
             COOKIE_NAME, token, httponly=True, samesite="Strict", path="/",
@@ -168,13 +176,13 @@ def create_app(
     @app.get("/api/me")
     def me():
         who = current_annotator()
-        return jsonify({"annotator": who}) if who else error(401, "not signed in")
+        return jsonify({"annotator": who}) if who else error(401, NOT_SIGNED_IN)
 
     @app.get("/api/clips")
     def list_clips():
         who = current_annotator()
         if who is None:
-            return error(401, "not signed in")
+            return error(401, NOT_SIGNED_IN)
         counts = store.labelled_counts(who)
         return jsonify({"clips": [
             {"clip_id": c.clip_id, "location": c.location, "frame_count": c.frame_count,
@@ -204,10 +212,10 @@ def create_app(
     def get_clip(clip_id):
         who = current_annotator()
         if who is None:
-            return error(401, "not signed in")
+            return error(401, NOT_SIGNED_IN)
         clip = index.clip(clip_id) if is_safe_id(clip_id) else None
         if clip is None:
-            return error(404, "unknown clip")
+            return error(404, UNKNOWN_CLIP)
         annotation = load_annotation(who, clip)
         if annotation is None:
             return error(409, UNREADABLE)
@@ -225,13 +233,13 @@ def create_app(
     def put_labels(clip_id):
         who = current_annotator()
         if who is None:
-            return error(401, "not signed in")
+            return error(401, NOT_SIGNED_IN)
         clip = index.clip(clip_id) if is_safe_id(clip_id) else None
         if clip is None:
-            return error(404, "unknown clip")
+            return error(404, UNKNOWN_CLIP)
         body = request.get_json(silent=True)
         if not isinstance(body, dict) or not _is_int(body.get("start")) or not _is_int(body.get("end")):
-            return error(400, "start and end must be integers")
+            return error(400, "Seleção inválida: início e fim devem ser números inteiros.")
         fields = {name: body[name] for name in LABEL_FIELDS if name in body}
         with lock_for(who):
             current = load_annotation(who, clip)
@@ -239,26 +247,37 @@ def create_app(
                 return error(409, UNREADABLE)
             try:
                 annotation = current.apply(body["start"], body["end"], **fields)
-            except ValueError as problem:
-                return error(400, str(problem))
+            except ValueError:
+                return error(400, INVALID_SELECTION)
             store.save(who, clip_id, annotation)
         return jsonify(clip_payload(clip, annotation))
+
+    @app.get("/guia/<name>")
+    def guide_image(name):
+        """Example images for the in-app guide: signed-in annotators only."""
+        if current_annotator() is None:
+            return error(401, NOT_SIGNED_IN)
+        if not GUIDE_IMAGE.match(name) or not (GUIDE_DIR / name).is_file():
+            return error(404, "Imagem não encontrada.")
+        response = send_from_directory(GUIDE_DIR, name, mimetype="image/jpeg")
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        return response
 
     @app.get("/sheet/<clip_id>/<int:sheet_index>")
     def sheet(clip_id, sheet_index):
         if current_annotator() is None:
-            return error(401, "not signed in")
+            return error(401, NOT_SIGNED_IN)
         sheets = index.sheets(clip_id) if is_safe_id(clip_id) else []
         match = next((s for s in sheets if s.sheet_index == sheet_index), None)
         if match is None:
-            return error(404, "unknown sheet")
+            return error(404, "Imagem não encontrada.")
         if image_source is None:
-            return error(501, "no image source configured")
+            return error(501, "Fonte de imagens não configurada.")
         try:
             data = image_source(match.drive_file_id)
         except Exception:  # noqa: BLE001 - never leak Drive details to the browser
             log.exception("image source failed for sheet %s/%s", clip_id, sheet_index)
-            return error(502, "image temporarily unavailable")
+            return error(502, "Imagem temporariamente indisponível. Tente novamente.")
         return Response(data, mimetype="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
 
