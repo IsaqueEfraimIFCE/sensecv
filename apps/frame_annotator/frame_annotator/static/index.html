@@ -47,6 +47,21 @@ tr.row{cursor:pointer}tr.row:hover{background:var(--panel)}
 .slider{display:flex;gap:10px;align-items:center;margin:8px 0}
 .slider input{flex:1}
 #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bad);color:#fff;padding:8px 14px;border-radius:6px;max-width:90vw}
+/* tela de anotação: topo maior, quadros maiores, ampliação */
+header h1{font-size:22px}
+header button{font-size:16px;padding:10px 16px}
+.toolbar{top:var(--header-h,68px);padding:14px 16px;gap:12px}
+.toolbar button{font-size:18px;padding:12px 18px;font-weight:600}
+.toolbar label{font-size:16px;font-weight:600;color:var(--text)}
+#clip-info{font-size:20px;font-weight:700;color:var(--text);margin:8px 0}
+#sel-info{font-size:15px}
+.tile .meta{font-size:14px;padding:5px 8px}
+.chip{font-size:13px;padding:1px 8px}
+#grid{grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.zoom-bar{display:flex;gap:12px;align-items:center;justify-content:center;margin:10px 0;flex-wrap:wrap}
+.zoom-bar button{font-size:17px;padding:10px 16px}
+.zoom-frame{width:min(100%,calc(100vh - 340px));min-width:260px;aspect-ratio:1/1;margin:0 auto;background:#000;background-repeat:no-repeat;border:5px solid var(--line);border-radius:8px}
+.zoom-frame.l-free{border-color:var(--free)}.zoom-frame.l-obst{border-color:var(--obst)}.zoom-frame.l-bad{border-color:var(--bad)}
 /* guide */
 .guide{max-width:1100px;margin:0 auto}
 .guide h2{margin:26px 0 8px;font-size:20px}
@@ -106,13 +121,22 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
         <button class="btn-right" data-act="deviation:right">Direita (E)</button></div>
       <div class="grp"><button class="btn-bad" data-act="unusable:true">Inutilizável (U)</button>
         <button data-act="unusable:false">Desfazer inutilizável</button></div>
-      <div class="grp"><button id="sel-all">Selecionar tudo (A)</button><button id="sel-none">Limpar seleção (Esc)</button></div>
+      <div class="grp"><button id="btn-zoom">Ampliar quadro (Z)</button><button id="sel-all">Selecionar tudo (A)</button><button id="sel-none">Limpar seleção (Esc)</button></div>
       <span id="sel-info" class="help"></span>
     </div>
-    <div class="slider"><label class="help" for="r-start">Início</label><input type="range" id="r-start" min="0" value="0">
-      <label class="help" for="r-end">Fim</label><input type="range" id="r-end" min="0" value="0"></div>
-    <p class="help">Clique em um quadro, arraste sobre vários ou use Shift+clique para selecionar um trecho; depois escolha os rótulos.
+    <p id="clip-help" class="help">Clique em um quadro ou arraste sobre vários para selecionar um trecho (Shift+clique ou Shift+<kbd>←</kbd><kbd>→</kbd> também estendem a seleção).
+      <strong>Duplo clique</strong> (ou <kbd>Z</kbd>) amplia um quadro; <kbd>←</kbd><kbd>→</kbd> trocam de quadro; <kbd>Enter</kbd> vai para o próximo clipe.
       Dúvidas sobre os critérios? Veja o <a href="#" id="link-guide-2">guia de anotação</a>.</p>
+    <div id="zoom" class="hidden">
+      <div class="zoom-bar">
+        <button id="zoom-prev">&larr; Anterior</button>
+        <strong id="zoom-title"></strong>
+        <button id="zoom-next">Próximo &rarr;</button>
+        <button id="zoom-close">Voltar à grade (Esc)</button>
+      </div>
+      <div id="zoom-frame" class="zoom-frame"></div>
+      <div id="zoom-label" class="help" style="text-align:center;font-size:17px"></div>
+    </div>
     <div id="grid"></div>
   </section>
 
@@ -126,10 +150,11 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
     <ol>
       <li><strong>Escolha um clipe</strong> na lista (o progresso de cada um aparece ao lado).</li>
       <li><strong>Veja os quadros</strong> em ordem, do início ao fim do trecho filmado.</li>
-      <li><strong>Selecione quadros</strong>: clique em um, arraste sobre vários, use <kbd>Shift</kbd>+clique para um trecho, ou as barras
-        <em>Início</em> e <em>Fim</em>. <kbd>A</kbd> seleciona o clipe inteiro.</li>
+      <li><strong>Selecione quadros</strong>: clique em um, arraste sobre vários ou use <kbd>Shift</kbd>+clique para um trecho.
+        <kbd>A</kbd> seleciona o clipe inteiro. <strong>Duplo clique</strong> (ou <kbd>Z</kbd>) amplia um quadro: nessa tela os botões
+        valem só para aquele quadro e as setas <kbd>←</kbd> <kbd>→</kbd> passam para o quadro anterior ou próximo.</li>
       <li><strong>Defina os rótulos</strong> com os botões (ou atalhos). Todos os quadros selecionados recebem o rótulo.</li>
-      <li>Quando <strong>todos</strong> os quadros estiverem marcados, aparece “clipe completo”. Use <em>Próximo pendente</em>.</li>
+      <li>Quando <strong>todos</strong> os quadros estiverem marcados, aparece “clipe completo”. Use <em>Próximo pendente</em> ou a tecla <kbd>Enter</kbd>.</li>
     </ol>
     <div class="callout">O trabalho é <strong>salvo automaticamente</strong> a cada ação. Para corrigir, basta selecionar os quadros e rotular de novo.
       Você pode fechar a página e continuar depois pelo mesmo link.</div>
@@ -195,7 +220,9 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
       <tr><td><kbd>1</kbd></td><td>Caminho livre</td><td><kbd>Q</kbd></td><td>Desvio: esquerda</td></tr>
       <tr><td><kbd>2</kbd></td><td>Obstáculo</td><td><kbd>W</kbd></td><td>Desvio: nenhum</td></tr>
       <tr><td><kbd>U</kbd></td><td>Inutilizável</td><td><kbd>E</kbd></td><td>Desvio: direita</td></tr>
-      <tr><td><kbd>A</kbd></td><td>Selecionar tudo</td><td><kbd>Esc</kbd></td><td>Limpar seleção</td></tr>
+      <tr><td><kbd>A</kbd></td><td>Selecionar tudo</td><td><kbd>Esc</kbd></td><td>Limpar seleção / sair da ampliação</td></tr>
+      <tr><td><kbd>Z</kbd></td><td>Ampliar / voltar à grade</td><td><kbd>Enter</kbd></td><td>Próximo clipe pendente</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Quadro anterior / próximo</td><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>Estender a seleção</td></tr>
     </table>
 
     <h2>Exemplos</h2>
@@ -281,7 +308,8 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
 "use strict";
 const $ = (id) => document.getElementById(id);
 const GUIDE_KEY = "guia_visto_v1";
-const state = { clips: [], clip: null, labels: [], sel: null, anchor: null, dragging: false, view: "login", returnTo: "list" };
+const state = { clips: [], clip: null, labels: [], sel: null, anchor: null, cursor: null, zoom: null,
+  dragging: false, view: "login", returnTo: "list" };
 
 function toast(message) {
   const el = $("toast");
@@ -307,6 +335,7 @@ function show(view) {
   $("btn-guide").classList.toggle("hidden", !signedIn || view === "guide");
   $("logout").classList.toggle("hidden", !signedIn);
   $("who").classList.toggle("hidden", !signedIn);
+  document.documentElement.style.setProperty("--header-h", document.querySelector("header").offsetHeight + "px");
   window.scrollTo(0, 0);
 }
 
@@ -380,7 +409,8 @@ async function openClip(clipId) {
   state.labels = expandRuns(clip.frame_count, clip.runs);
   state.sel = null;
   state.anchor = null;
-  $("r-start").max = $("r-end").max = clip.frame_count - 1;
+  state.cursor = null;
+  state.zoom = null;
   $("title").textContent = `${clip.location} / ${clip.clip_id}`;
   buildGrid();
   renderClip();
@@ -453,13 +483,91 @@ function renderClip() {
   const done = state.labels.filter((l) => l && (l.unusable || (l.obstacle && l.deviation))).length;
   $("clip-info").textContent = `${done}/${state.clip.frame_count} quadros prontos` + (done === state.clip.frame_count ? " — clipe completo" : "");
   $("sel-info").textContent = state.sel ? `Quadros ${lo}–${hi} selecionados (${hi - lo + 1})` : "Nenhum quadro selecionado";
-  $("r-start").value = Math.max(lo, 0);
-  $("r-end").value = Math.max(hi, 0);
+  renderZoom();
+}
+
+function paintSprite(el, i) {
+  const sheet = sheetFor(i);
+  if (!sheet) return;
+  const k = i - sheet.first_frame;
+  const col = k % sheet.cols, row = Math.floor(k / sheet.cols);
+  const rows = Math.ceil(sheet.frame_count / sheet.cols);
+  el.style.backgroundImage = `url("${sheet.url}")`;
+  el.style.backgroundSize = `${sheet.cols * 100}% ${rows * 100}%`;
+  el.style.backgroundPosition =
+    `${sheet.cols > 1 ? (col * 100) / (sheet.cols - 1) : 0}% ${rows > 1 ? (row * 100) / (rows - 1) : 0}%`;
+}
+
+function renderZoom() {
+  const open = state.zoom !== null;
+  $("zoom").classList.toggle("hidden", !open);
+  $("grid").classList.toggle("hidden", open);
+  $("btn-zoom").textContent = open ? "Voltar à grade (Z)" : "Ampliar quadro (Z)";
+  $("clip-help").classList.toggle("hidden", open);  // mais espaço para o quadro ampliado
+  if (!open) return;
+  const i = state.zoom, label = state.labels[i];
+  let cls = "zoom-frame";
+  let text = "pendente — escolha os rótulos nos botões acima";
+  if (label && label.unusable) { cls += " l-bad"; text = "inutilizável"; }
+  else if (label) {
+    const parts = [];
+    if (label.obstacle === "free_path") { cls += " l-free"; parts.push("caminho livre"); }
+    else if (label.obstacle === "obstacle") { cls += " l-obst"; parts.push("obstáculo"); }
+    else parts.push("obstáculo: pendente");
+    parts.push(label.deviation ? "desvio: " + DEVIATION_TEXT[label.deviation] : "desvio: pendente");
+    text = parts.join(" · ");
+  }
+  const frame = $("zoom-frame");
+  paintSprite(frame, i);
+  frame.className = cls;
+  $("zoom-title").textContent = `Quadro ${i + 1} de ${state.clip.frame_count}`;
+  $("zoom-label").textContent = text;
+  $("zoom-prev").disabled = i === 0;
+  $("zoom-next").disabled = i === state.clip.frame_count - 1;
+}
+
+function scrollTileIntoView(i) {
+  const tile = $("grid").children[i];
+  if (tile) tile.scrollIntoView({ block: "nearest" });
 }
 
 function setSelection(a, b) {
   state.sel = [Math.min(a, b), Math.max(a, b)];
+  state.cursor = b;
   renderClip();
+}
+
+function openZoom(i) {
+  state.zoom = i;
+  state.cursor = i;
+  state.anchor = i;
+  state.sel = [i, i];  // na ampliação, os botões valem só para este quadro
+  renderClip();
+}
+
+function closeZoom() {
+  const i = state.zoom;
+  state.zoom = null;
+  renderClip();
+  if (i !== null) scrollTileIntoView(i);
+}
+
+function toggleZoom() {
+  if (state.zoom !== null) closeZoom();
+  else openZoom(state.sel ? state.sel[0] : 0);
+}
+
+function moveCursor(delta, extend) {
+  const last = state.clip.frame_count - 1;
+  const from = state.cursor !== null ? state.cursor : (state.sel ? state.sel[0] : 0);
+  const to = Math.max(0, Math.min(last, from + delta));
+  state.cursor = to;
+  if (state.zoom !== null) { state.zoom = to; state.anchor = to; state.sel = [to, to]; renderClip(); return; }
+  if (extend) {
+    if (state.anchor === null) state.anchor = from;
+    setSelection(state.anchor, to);
+  } else { state.anchor = to; state.sel = [to, to]; renderClip(); }
+  scrollTileIntoView(to);
 }
 
 // Mirrors the server's labelling rules (labels.py) so the screen updates at once;
@@ -555,17 +663,41 @@ document.querySelectorAll("[data-act]").forEach((button) =>
 
 $("sel-all").addEventListener("click", () => setSelection(0, state.clip.frame_count - 1));
 $("sel-none").addEventListener("click", () => { state.sel = null; renderClip(); });
-for (const id of ["r-start", "r-end"])
-  $(id).addEventListener("input", () => setSelection(Number($("r-start").value), Number($("r-end").value)));
+$("grid").addEventListener("dblclick", (event) => {
+  const tile = event.target.closest(".tile");
+  if (tile) openZoom(Number(tile.dataset.i));
+});
+$("btn-zoom").addEventListener("click", toggleZoom);
+$("zoom-prev").addEventListener("click", () => moveCursor(-1, false));
+$("zoom-next").addEventListener("click", () => moveCursor(1, false));
+$("zoom-close").addEventListener("click", closeZoom);
+let lastWheel = 0;
+$("zoom").addEventListener("wheel", (event) => {
+  event.preventDefault();
+  const now = Date.now();
+  if (now - lastWheel < 120) return;
+  lastWheel = now;
+  moveCursor(event.deltaY > 0 ? 1 : -1, false);
+}, { passive: false });
 
 window.addEventListener("keydown", (event) => {
   if (state.view !== "clip" || event.target.tagName === "INPUT" || event.ctrlKey || event.metaKey || event.altKey) return;
   const keys = { "1": "obstacle:free_path", "2": "obstacle:obstacle", q: "deviation:left",
     w: "deviation:none", e: "deviation:right", u: "unusable:true" };
   const key = event.key.toLowerCase();
+  const zoomed = state.zoom !== null;
   if (keys[key]) { event.preventDefault(); applyLabel(parseAct(keys[key])); }
-  else if (key === "a") { event.preventDefault(); setSelection(0, state.clip.frame_count - 1); }
-  else if (key === "escape") { state.sel = null; renderClip(); }
+  else if (key === "enter") { event.preventDefault(); goNextClip(); }
+  else if (key === "z") { event.preventDefault(); toggleZoom(); }
+  else if (key === "arrowleft" || key === "arrowright") {
+    event.preventDefault();
+    moveCursor(key === "arrowright" ? 1 : -1, event.shiftKey);
+  }
+  else if (key === "a" && !zoomed) { event.preventDefault(); setSelection(0, state.clip.frame_count - 1); }
+  else if (key === "escape") {
+    if (zoomed) closeZoom();
+    else { state.sel = null; renderClip(); }
+  }
 });
 
 $("back").addEventListener("click", () => { if (state.view === "guide") closeGuide(); else loadList(); });
@@ -573,13 +705,17 @@ $("btn-guide").addEventListener("click", openGuide);
 $("guide-done").addEventListener("click", closeGuide);
 for (const id of ["link-guide", "link-guide-2"])
   $(id).addEventListener("click", (event) => { event.preventDefault(); openGuide(); });
-$("next").addEventListener("click", async () => {
+async function goNextClip() {
+  await sendChain;  // deixa os rótulos recém-marcados chegarem ao servidor antes de contar
   const clips = (await api("/api/clips")).clips;
   const pending = clips.filter((c) => c.labelled < c.frame_count);
   const here = clips.findIndex((c) => c.clip_id === state.clip.clip_id);
   const next = pending.find((c) => clips.indexOf(c) > here) || pending[0];
   if (next) openClip(next.clip_id); else toast("Todos os clipes estão completos — obrigado!");
-});
+}
+$("next").addEventListener("click", goNextClip);
+window.addEventListener("resize", () =>
+  document.documentElement.style.setProperty("--header-h", document.querySelector("header").offsetHeight + "px"));
 $("only-open").addEventListener("change", renderList);
 $("logout").addEventListener("click", async () => {
   try { await api("/api/logout", { method: "POST" }); } catch (error) { /* already signed out */ }
