@@ -54,6 +54,8 @@ header button{font-size:16px;padding:10px 16px}
 .toolbar button{font-size:18px;padding:12px 18px;font-weight:600}
 .toolbar label{font-size:16px;font-weight:600;color:var(--text)}
 #clip-info{font-size:20px;font-weight:700;color:var(--text);margin:8px 0}
+.hint{font-size:20px;color:var(--text);margin:10px 0 14px}
+.hint strong{font-weight:800}
 #sel-info{font-size:15px}
 .tile .meta{font-size:14px;padding:5px 8px}
 .chip{font-size:13px;padding:1px 8px}
@@ -89,7 +91,7 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
   <span id="who" class="help"></span>
   <button id="btn-guide" class="hidden">Guia de anotação</button>
   <button id="back" class="hidden">&larr; Clipes</button>
-  <button id="next" class="hidden">Próximo pendente &rarr;</button>
+  <button id="next" class="hidden">Próximo pendente (Enter) &rarr;</button>
   <button id="logout" class="hidden">Sair</button>
 </header>
 <main>
@@ -124,9 +126,7 @@ kbd{background:var(--bg);border:1px solid var(--line);border-bottom-width:2px;bo
       <div class="grp"><button id="btn-zoom">Ampliar quadro (Z)</button><button id="sel-all">Selecionar tudo (A)</button><button id="sel-none">Limpar seleção (Esc)</button></div>
       <span id="sel-info" class="help"></span>
     </div>
-    <p id="clip-help" class="help">Clique em um quadro ou arraste sobre vários para selecionar um trecho (Shift+clique ou Shift+<kbd>←</kbd><kbd>→</kbd> também estendem a seleção).
-      <strong>Duplo clique</strong> (ou <kbd>Z</kbd>) amplia um quadro; <kbd>←</kbd><kbd>→</kbd> trocam de quadro; <kbd>Enter</kbd> vai para o próximo clipe.
-      Dúvidas sobre os critérios? Veja o <a href="#" id="link-guide-2">guia de anotação</a>.</p>
+    <p id="clip-help" class="hint"><strong>Arraste</strong> sobre os quadros para selecionar &middot; <strong>Duplo clique</strong> amplia um quadro</p>
     <div id="zoom" class="hidden">
       <div class="zoom-bar">
         <button id="zoom-prev">&larr; Anterior</button>
@@ -703,7 +703,7 @@ window.addEventListener("keydown", (event) => {
 $("back").addEventListener("click", () => { if (state.view === "guide") closeGuide(); else loadList(); });
 $("btn-guide").addEventListener("click", openGuide);
 $("guide-done").addEventListener("click", closeGuide);
-for (const id of ["link-guide", "link-guide-2"])
+for (const id of ["link-guide"])
   $(id).addEventListener("click", (event) => { event.preventDefault(); openGuide(); });
 async function goNextClip() {
   await sendChain;  // deixa os rótulos recém-marcados chegarem ao servidor antes de contar
