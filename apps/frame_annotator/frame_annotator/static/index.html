@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frame Annotator</title>
+<style>
+:root{--bg:#10141a;--panel:#18202a;--line:#2b3644;--text:#e6edf5;--dim:#8d9bad;
+  --free:#2e9e5b;--obst:#d9822b;--left:#3b82f6;--right:#a855f7;--none:#6b7787;--bad:#e5484d;--sel:#f5d90a}
+@media (prefers-color-scheme: light){:root{--bg:#f4f6f9;--panel:#fff;--line:#d5dbe3;--text:#18202a;--dim:#5d6b7c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0;flex:1}
+main{padding:16px;max-width:1500px;margin:0 auto}
+button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px 12px;cursor:pointer;font:inherit}
+button:hover{border-color:var(--sel)}
+button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.hidden{display:none!important}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;max-width:420px;margin:60px auto}
+input[type=password],input[type=text]{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+tr.row{cursor:pointer}tr.row:hover{background:var(--panel)}
+.bar{height:8px;background:var(--line);border-radius:4px;min-width:120px;overflow:hidden}
+.bar>i{display:block;height:100%;background:var(--free)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0;padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px;position:sticky;top:50px;z-index:4}
+.toolbar .grp{display:flex;gap:6px;align-items:center;padding-right:12px;border-right:1px solid var(--line)}
+.toolbar .grp:last-child{border:none}
+@media (max-width:700px){.toolbar{position:static}}
+.toolbar label{color:var(--dim);font-size:13px}
+.btn-free{border-color:var(--free)}.btn-obst{border-color:var(--obst)}.btn-left{border-color:var(--left)}
+.btn-right{border-color:var(--right)}.btn-none{border-color:var(--none)}.btn-bad{border-color:var(--bad)}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;user-select:none}
+.tile{position:relative;border:3px solid var(--line);border-radius:6px;overflow:hidden;background:#000;cursor:pointer}
+.tile .img{width:100%;aspect-ratio:4/3;background-repeat:no-repeat}
+.tile .meta{display:flex;gap:4px;align-items:center;justify-content:space-between;padding:3px 6px;font-size:12px;background:var(--panel)}
+.tile.sel{outline:3px solid var(--sel);outline-offset:-3px}
+.tile.l-free{border-color:var(--free)}.tile.l-obst{border-color:var(--obst)}
+.tile.l-bad{border-color:var(--bad)}
+.tile.l-bad .img{opacity:.35}
+.chip{padding:0 6px;border-radius:9px;font-size:11px;color:#fff}
+.c-free{background:var(--free)}.c-obst{background:var(--obst)}.c-left{background:var(--left)}
+.c-right{background:var(--right)}.c-none{background:var(--none)}.c-bad{background:var(--bad)}.c-miss{background:var(--line);color:var(--dim)}
+.help{color:var(--dim);font-size:13px;margin:6px 0}
+.slider{display:flex;gap:10px;align-items:center;margin:8px 0}
+.slider input{flex:1}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--bad);color:#fff;padding:8px 14px;border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Frame Annotator</h1>
+  <span id="who" class="help"></span>
+  <button id="back" class="hidden">&larr; Clips</button>
+  <button id="next" class="hidden">Next unfinished &rarr;</button>
+</header>
+<main>
+  <section id="login" class="card hidden">
+    <h2>Sign in</h2>
+    <p class="help">Paste the private token you were given.</p>
+    <input id="token" type="password" autocomplete="off" placeholder="Annotator token">
+    <p><button id="signin" class="primary">Sign in</button></p>
+  </section>
+
+  <section id="list" class="hidden">
+    <p class="help">Your work is saved automatically. Stop and resume any time: every frame must end up labelled or flagged unusable.</p>
+    <label class="help"><input type="checkbox" id="only-open"> only unfinished clips</label>
+    <table><thead><tr><th>Location</th><th>Clip</th><th>Frames</th><th>Progress</th></tr></thead><tbody id="rows"></tbody></table>
+  </section>
+
+  <section id="clip" class="hidden">
+    <div class="help" id="clip-info"></div>
+    <div class="toolbar">
+      <div class="grp"><label>Obstacle</label>
+        <button class="btn-free" data-act="obstacle:free_path">Free path (1)</button>
+        <button class="btn-obst" data-act="obstacle:obstacle">Obstacle (2)</button></div>
+      <div class="grp"><label>Deviation</label>
+        <button class="btn-left" data-act="deviation:left">Left (Q)</button>
+        <button class="btn-none" data-act="deviation:none">None (W)</button>
+        <button class="btn-right" data-act="deviation:right">Right (E)</button></div>
+      <div class="grp"><button class="btn-bad" data-act="unusable:true">Unusable (U)</button>
+        <button data-act="unusable:false">Clear flag</button></div>
+      <div class="grp"><button id="sel-all">Select all (A)</button><button id="sel-none">Clear selection (Esc)</button></div>
+      <span id="sel-info" class="help"></span>
+    </div>
+    <div class="slider"><label class="help" for="r-start">From</label><input type="range" id="r-start" min="0" value="0">
+      <label class="help" for="r-end">To</label><input type="range" id="r-end" min="0" value="0"></div>
+    <p class="help">Click a frame, drag across frames, or shift-click to select a range, then set its labels.
+      <b>Deviation left</b> = obstacle on the right (deviate left); <b>right</b> = obstacle on the left;
+      <b>none</b> = free corridor or a stop. Free path always means deviation none.
+      Obstacle means an obstacle in the corridor within about 3 m.</p>
+    <div id="grid"></div>
+  </section>
+</main>
+<div id="toast" class="hidden"></div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = { clips: [], clip: null, labels: [], sel: null, anchor: null, dragging: false };
+
+function toast(message) {
+  const el = $("toast");
+  el.textContent = message;
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), 3500);
+}
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  if (response.status === 401) { show("login"); throw new Error("signed out"); }
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || response.statusText);
+  return body;
+}
+
+function show(view) {
+  for (const id of ["login", "list", "clip"]) $(id).classList.toggle("hidden", id !== view);
+  $("back").classList.toggle("hidden", view !== "clip");
+  $("next").classList.toggle("hidden", view !== "clip");
+}
+
+// ---- clip list ----
+async function loadList() {
+  state.clips = (await api("/api/clips")).clips;
+  renderList();
+  show("list");
+  $("title").textContent = "Frame Annotator";
+}
+
+function renderList() {
+  const onlyOpen = $("only-open").checked;
+  const rows = $("rows");
+  rows.replaceChildren();
+  for (const clip of state.clips) {
+    if (onlyOpen && clip.labelled >= clip.frame_count) continue;
+    const tr = document.createElement("tr");
+    tr.className = "row";
+    const pct = Math.round((100 * clip.labelled) / clip.frame_count);
+    for (const text of [clip.location, clip.clip_id, String(clip.frame_count)]) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    const td = document.createElement("td");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("i");
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+    td.appendChild(bar);
+    td.appendChild(document.createTextNode(` ${clip.labelled}/${clip.frame_count}`));
+    tr.appendChild(td);
+    tr.addEventListener("click", () => openClip(clip.clip_id));
+    rows.appendChild(tr);
+  }
+}
+
+// ---- clip view ----
+function expandRuns(frameCount, runs) {
+  const labels = new Array(frameCount).fill(null);
+  for (const [start, end, obstacle, deviation, unusable] of runs)
+    for (let i = start; i <= end; i++) labels[i] = { obstacle, deviation, unusable };
+  return labels;
+}
+
+async function openClip(clipId) {
+  const clip = await api("/api/clips/" + encodeURIComponent(clipId));
+  state.clip = clip;
+  state.labels = expandRuns(clip.frame_count, clip.runs);
+  state.sel = null;
+  state.anchor = null;
+  $("r-start").max = $("r-end").max = clip.frame_count - 1;
+  $("title").textContent = `${clip.location} / ${clip.clip_id}`;
+  buildGrid();
+  renderClip();
+  show("clip");
+}
+
+function sheetFor(frame) {
+  return state.clip.sheets.find((s) => frame >= s.first_frame && frame < s.first_frame + s.frame_count);
+}
+
+function buildGrid() {
+  const grid = $("grid");
+  grid.replaceChildren();
+  for (let i = 0; i < state.clip.frame_count; i++) {
+    const sheet = sheetFor(i);
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    tile.dataset.i = String(i);
+    const img = document.createElement("div");
+    img.className = "img";
+    if (sheet) {
+      const k = i - sheet.first_frame;
+      const col = k % sheet.cols, row = Math.floor(k / sheet.cols);
+      const rows = Math.ceil(sheet.frame_count / sheet.cols);
+      img.style.backgroundImage = `url("${sheet.url}")`;
+      img.style.backgroundSize = `${sheet.cols * 100}% ${rows * 100}%`;
+      img.style.backgroundPosition =
+        `${sheet.cols > 1 ? (col * 100) / (sheet.cols - 1) : 0}% ${rows > 1 ? (row * 100) / (rows - 1) : 0}%`;
+    }
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    tile.append(img, meta);
+    grid.appendChild(tile);
+  }
+}
+
+function chip(text, cls) {
+  const span = document.createElement("span");
+  span.className = "chip " + cls;
+  span.textContent = text;
+  return span;
+}
+
+function renderClip() {
+  const [lo, hi] = state.sel || [-1, -2];
+  const tiles = $("grid").children;
+  for (let i = 0; i < tiles.length; i++) {
+    const tile = tiles[i], label = state.labels[i];
+    tile.className = "tile" + (i >= lo && i <= hi ? " sel" : "");
+    const meta = tile.querySelector(".meta");
+    meta.replaceChildren();
+    const index = document.createElement("span");
+    index.textContent = "#" + i;
+    meta.appendChild(index);
+    const chips = document.createElement("span");
+    if (!label) chips.appendChild(chip("todo", "c-miss"));
+    else if (label.unusable) { tile.classList.add("l-bad"); chips.appendChild(chip("unusable", "c-bad")); }
+    else {
+      if (label.obstacle === "free_path") { tile.classList.add("l-free"); chips.appendChild(chip("free", "c-free")); }
+      else if (label.obstacle === "obstacle") { tile.classList.add("l-obst"); chips.appendChild(chip("obstacle", "c-obst")); }
+      else chips.appendChild(chip("obst?", "c-miss"));
+      if (label.deviation) chips.appendChild(chip(label.deviation, "c-" + label.deviation));
+      else chips.appendChild(chip("dev?", "c-miss"));
+    }
+    meta.appendChild(chips);
+  }
+  const done = state.labels.filter((l) => l && (l.unusable || (l.obstacle && l.deviation))).length;
+  $("clip-info").textContent = `${done}/${state.clip.frame_count} frames done` + (done === state.clip.frame_count ? " — clip complete" : "");
+  $("sel-info").textContent = state.sel ? `Selected frames ${lo}–${hi} (${hi - lo + 1})` : "No frames selected";
+  $("r-start").value = Math.max(lo, 0);
+  $("r-end").value = Math.max(hi, 0);
+}
+
+function setSelection(a, b) {
+  state.sel = [Math.min(a, b), Math.max(a, b)];
+  renderClip();
+}
+
+async function applyLabel(fields) {
+  if (!state.sel) { toast("Select some frames first"); return; }
+  const [start, end] = state.sel;
+  try {
+    const result = await api(`/api/clips/${encodeURIComponent(state.clip.clip_id)}/labels`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start, end, ...fields }),
+    });
+    state.clip = { ...state.clip, ...result };
+    state.labels = expandRuns(result.frame_count, result.runs);
+    renderClip();
+  } catch (error) { toast(error.message); }
+}
+
+function parseAct(act) {
+  const [field, value] = act.split(":");
+  return { [field]: field === "unusable" ? value === "true" : value };
+}
+
+// ---- events ----
+$("grid").addEventListener("mousedown", (event) => {
+  const tile = event.target.closest(".tile");
+  if (!tile) return;
+  const i = Number(tile.dataset.i);
+  if (event.shiftKey && state.anchor !== null) setSelection(state.anchor, i);
+  else { state.anchor = i; state.dragging = true; setSelection(i, i); }
+});
+$("grid").addEventListener("mouseover", (event) => {
+  const tile = event.target.closest(".tile");
+  if (tile && state.dragging) setSelection(state.anchor, Number(tile.dataset.i));
+});
+window.addEventListener("mouseup", () => { state.dragging = false; });
+
+document.querySelectorAll("[data-act]").forEach((button) =>
+  button.addEventListener("click", () => applyLabel(parseAct(button.dataset.act))));
+
+$("sel-all").addEventListener("click", () => setSelection(0, state.clip.frame_count - 1));
+$("sel-none").addEventListener("click", () => { state.sel = null; renderClip(); });
+for (const id of ["r-start", "r-end"])
+  $(id).addEventListener("input", () => setSelection(Number($("r-start").value), Number($("r-end").value)));
+
+window.addEventListener("keydown", (event) => {
+  if ($("clip").classList.contains("hidden") || event.target.tagName === "INPUT") return;
+  const keys = { "1": "obstacle:free_path", "2": "obstacle:obstacle", q: "deviation:left",
+    w: "deviation:none", e: "deviation:right", u: "unusable:true" };
+  const key = event.key.toLowerCase();
+  if (keys[key]) { event.preventDefault(); applyLabel(parseAct(keys[key])); }
+  else if (key === "a") { event.preventDefault(); setSelection(0, state.clip.frame_count - 1); }
+  else if (key === "escape") { state.sel = null; renderClip(); }
+});
+
+$("back").addEventListener("click", loadList);
+$("next").addEventListener("click", async () => {
+  const clips = (await api("/api/clips")).clips;
+  const pending = clips.filter((c) => c.labelled < c.frame_count);
+  const here = clips.findIndex((c) => c.clip_id === state.clip.clip_id);
+  const next = pending.find((c) => clips.indexOf(c) > here) || pending[0];
+  if (next) openClip(next.clip_id); else toast("All clips are complete — thank you!");
+});
+$("only-open").addEventListener("change", renderList);
+$("signin").addEventListener("click", async () => {
+  try {
+    await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: $("token").value }) });
+    $("token").value = "";
+    await start();
+  } catch (error) { toast("Invalid token"); }
+});
+
+async function start() {
+  try {
+    const me = await api("/api/me");
+    $("who").textContent = "Signed in as " + me.annotator;
+    await loadList();
+  } catch (error) { show("login"); }
+}
+start();
+</script>
+</body>
+</html>
