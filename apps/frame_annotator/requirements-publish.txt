@@ -1,0 +1,4 @@
+# Needed only on the machine that builds and uploads the sprite sheets.
+google-api-python-client>=2.100,<3
+google-auth>=2.30,<3
+pillow>=10.0

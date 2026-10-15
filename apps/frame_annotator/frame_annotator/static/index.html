@@ -192,6 +192,7 @@ function buildGrid() {
     const img = document.createElement("div");
     img.className = "img";
     if (sheet) {
+      img.style.aspectRatio = `${sheet.tile_w} / ${sheet.tile_h}`;
       const k = i - sheet.first_frame;
       const col = k % sheet.cols, row = Math.floor(k / sheet.cols);
       const rows = Math.ceil(sheet.frame_count / sheet.cols);
@@ -321,6 +322,12 @@ $("signin").addEventListener("click", async () => {
 
 async function start() {
   try {
+    const invite = new URLSearchParams(location.hash.slice(1)).get("token");
+    if (invite) {  // invite link: /#token=...  (the hash never reaches the server)
+      history.replaceState(null, "", location.pathname);
+      await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: invite }) });
+    }
     const me = await api("/api/me");
     $("who").textContent = "Signed in as " + me.annotator;
     await loadList();

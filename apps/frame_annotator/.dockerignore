@@ -1,0 +1,7 @@
+tests
+**/__pycache__
+.pytest_cache
+*.sqlite
+annotators*.json
+requirements-publish.txt
+README.md

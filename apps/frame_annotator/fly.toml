@@ -1,0 +1,41 @@
+# Deploy from the repo root:
+#   fly deploy --config apps/frame_annotator/fly.toml --dockerfile apps/frame_annotator/Dockerfile apps/frame_annotator
+# (rename `app` if the name is taken)
+app = "sensecv-annotator"
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  ANNOTATOR_INDEX_DB = "/data/index.sqlite"
+  IMAGE_CACHE_DIR = "/data/cache"
+  IMAGE_CACHE_MAX_MB = "1500"
+
+# Secrets (never in this file): ANNOTATOR_TOKENS_JSON, SHEETS_DRIVE_FOLDER_ID,
+# ANNOTATIONS_DRIVE_FOLDER_ID, GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
+
+[mounts]
+  source = "annotator_data"
+  destination = "/data"
+  initial_size = "3gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"   # keep the in-memory write-through cache warm
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  memory_mb = 512
+  cpu_kind = "shared"
+  cpus = 1

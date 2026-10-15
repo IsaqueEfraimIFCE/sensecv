@@ -59,7 +59,7 @@ class IndexDb:
         self.path = Path(path)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.path)
+        conn = sqlite3.connect(self.path, timeout=30)  # publisher threads write concurrently
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
