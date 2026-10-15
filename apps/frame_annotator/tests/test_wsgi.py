@@ -45,10 +45,12 @@ def test_server_boots_from_the_index_stored_on_drive(published, tmp_path):
 
 def test_labels_survive_a_server_restart(published, tmp_path):
     headers = {"X-Annotator-Token": TOKEN}
-    first = build_app(_env(tmp_path), drive=published).test_client()
-    response = first.put("/api/clips/E1_0207_02/labels", headers=headers,
-                         json={"start": 0, "end": 1, "obstacle": "free_path"})
+    first_app = build_app(_env(tmp_path), drive=published)
+    response = first_app.test_client().put(
+        "/api/clips/E1_0207_02/labels", headers=headers,
+        json={"start": 0, "end": 1, "obstacle": "free_path"})
     assert response.status_code == 200
+    assert first_app.extensions["annotation_store"].flush(10)  # write-behind
 
     second = build_app(_env(tmp_path), drive=published).test_client()
     opened = second.get("/api/clips/E1_0207_02", headers=headers).get_json()

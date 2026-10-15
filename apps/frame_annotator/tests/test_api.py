@@ -235,6 +235,28 @@ def test_user_facing_errors_are_in_portuguese_and_do_not_echo_internals(client):
     assert unknown == "Clipe não encontrado."
 
 
+def test_health_endpoint_is_public_and_reports_unsynced_writes(tmp_path):
+    from types import SimpleNamespace
+
+    state = {"unsynced": 0, "ok": True}
+    index = IndexDb(tmp_path / "i.sqlite")
+    index.create()
+    store = SimpleNamespace(health=lambda: dict(state))
+    app = create_app(index=index, store=store, tokens=TOKENS)
+    client = app.test_client()
+
+    assert client.get("/api/health").status_code == 200
+
+    state.update(unsynced=3, ok=False)
+    response = client.get("/api/health")
+    assert response.status_code == 503
+    assert response.get_json() == {"unsynced": 3, "ok": False}
+
+
+def test_health_endpoint_is_ok_for_stores_without_write_behind(client):
+    assert client.get("/api/health").status_code == 200
+
+
 def test_only_the_index_page_is_served_unauthenticated(client):
     assert client.get("/").status_code == 200
     assert client.get("/static/index.html").status_code == 404

@@ -92,6 +92,7 @@ def create_app(
     terminated in front of the app (e.g. Fly.io)."""
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = MAX_BODY_BYTES
+    app.extensions["annotation_store"] = store  # lets the entry point flush on shutdown
     limiter = FailureLimiter(max_failures, failure_window_sec)
     known = [(hashlib.sha256(t.encode()).digest(), who) for t, who in tokens.items()]
     annotator_locks: dict = defaultdict(threading.Lock)
@@ -166,6 +167,12 @@ def create_app(
             secure=secure_cookies or request.is_secure, max_age=COOKIE_MAX_AGE,
         )
         return response
+
+    @app.get("/api/health")
+    def health():
+        """Public. 503 when annotation writes to storage are stuck unsynced."""
+        report = store.health() if hasattr(store, "health") else {"unsynced": 0, "ok": True}
+        return jsonify(report), (200 if report["ok"] else 503)
 
     @app.post("/api/logout")
     def logout():

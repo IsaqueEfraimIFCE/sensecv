@@ -4,6 +4,7 @@ gunicorn entry point: ``frame_annotator.wsgi:create_app_from_env()`` (one worker
 """
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import tempfile
@@ -66,9 +67,11 @@ def build_app(env: Mapping, drive=None):
     index_path = Path(env.get("ANNOTATOR_INDEX_DB", "/data/index.sqlite"))
     _ensure_index(drive, sheets_folder, index_path, force=env.get("ANNOTATOR_REFRESH_INDEX") == "1")
     cache_mb = int(env.get("IMAGE_CACHE_MAX_MB", "2000"))
+    store = DriveAnnotationStore(drive, annotations_folder, write_behind=True)
+    atexit.register(store.close)  # flush unsaved work when the process exits
     return create_app(
         index=IndexDb(index_path),
-        store=DriveAnnotationStore(drive, annotations_folder),
+        store=store,
         tokens=tokens,
         image_source=CachedImageSource(drive, env.get("IMAGE_CACHE_DIR", "/data/cache"),
                                        cache_mb * 1_000_000),

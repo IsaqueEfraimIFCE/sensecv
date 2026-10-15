@@ -462,19 +462,73 @@ function setSelection(a, b) {
   renderClip();
 }
 
+// Mirrors the server's labelling rules (labels.py) so the screen updates at once;
+// the server's answer is reconciled afterwards.
+const INVALID = Symbol("invalid");
+function nextLabel(current, f) {
+  if (f.unusable === true) return { obstacle: null, deviation: null, unusable: true };
+  let c = current || { obstacle: null, deviation: null, unusable: false };
+  if (c.unusable) {
+    if (f.obstacle === undefined && f.deviation === undefined) return f.unusable === false ? null : current;
+    c = { obstacle: null, deviation: null, unusable: false };
+  }
+  const obstacle = f.obstacle !== undefined ? f.obstacle : c.obstacle;
+  let deviation = f.deviation !== undefined ? f.deviation : c.deviation;
+  if (f.obstacle === "free_path") deviation = "none";
+  else if (f.obstacle !== undefined && c.obstacle === "free_path" && f.deviation === undefined) deviation = null;
+  if (obstacle === "free_path" && deviation !== null && deviation !== "none") return INVALID;
+  if (obstacle === null && deviation === null) return null;
+  return { obstacle, deviation, unusable: false };
+}
+
+let inflight = 0;
+let sendChain = Promise.resolve();
+
+async function resyncClip(clipId) {
+  try {
+    const clip = await api("/api/clips/" + encodeURIComponent(clipId));
+    if (state.clip && state.clip.clip_id === clipId) {
+      state.clip = clip;
+      state.labels = expandRuns(clip.frame_count, clip.runs);
+      renderClip();
+    }
+  } catch (error) { /* signed out: the login screen is already showing */ }
+}
+
 async function applyLabel(fields) {
   if (!state.sel) { toast("Selecione alguns quadros primeiro."); return; }
   const [start, end] = state.sel;
-  try {
-    const result = await api(`/api/clips/${encodeURIComponent(state.clip.clip_id)}/labels`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start, end, ...fields }),
-    });
-    state.clip = { ...state.clip, ...result };
-    state.labels = expandRuns(result.frame_count, result.runs);
-    renderClip();
-  } catch (error) { toast(error.message); }
+  const next = state.labels.slice();
+  for (let i = start; i <= end; i++) {
+    const label = nextLabel(next[i], fields);
+    if (label === INVALID) {
+      toast("Caminho livre só aceita desvio “nenhum”. Marque “Obstáculo” antes de escolher esquerda ou direita.");
+      return;
+    }
+    next[i] = label;
+  }
+  state.labels = next;
+  renderClip();  // instantâneo: não espera o servidor
+  const clipId = state.clip.clip_id;
+  inflight += 1;
+  sendChain = sendChain.then(async () => {
+    try {
+      const result = await api(`/api/clips/${encodeURIComponent(clipId)}/labels`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start, end, ...fields }),
+      });
+      // só a última resposta de uma sequência é aplicada: respostas antigas nunca desfazem cliques novos
+      if (inflight === 1 && state.clip && state.clip.clip_id === clipId) {
+        state.clip = { ...state.clip, ...result };
+        state.labels = expandRuns(result.frame_count, result.runs);
+        renderClip();
+      }
+    } catch (error) {
+      toast(error.message);
+      await resyncClip(clipId);
+    } finally { inflight -= 1; }
+  });
 }
 
 function parseAct(act) {
