@@ -1,0 +1,42 @@
+# Deploy from the repo root:
+#   fly deploy --config apps/clip_annotator/fly.toml --dockerfile apps/clip_annotator/Dockerfile apps/clip_annotator
+# (rename `app` if the name is taken)
+app = "sensecv-clip-annotator"
+primary_region = "gru"
+kill_timeout = 30   # seconds the app gets to flush unsaved annotations on shutdown
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  ANNOTATOR_INDEX_DB = "/data/index.sqlite"
+  VIDEO_CACHE_DIR = "/data/cache"
+  VIDEO_CACHE_MAX_MB = "1500"
+
+# Secrets (never in this file): ANNOTATOR_TOKENS_JSON, VIDEOS_DRIVE_FOLDER_ID,
+# ANNOTATIONS_DRIVE_FOLDER_ID, GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
+
+[mounts]
+  source = "clip_annotator_data"
+  destination = "/data"
+  initial_size = "3gb"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"   # keep the in-memory write-through cache warm
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  memory_mb = 512
+  cpu_kind = "shared"
+  cpus = 1

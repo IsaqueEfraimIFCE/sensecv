@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SenseCV Anotador de clipes</title>
+<link rel="icon" href="data:,">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+/* Same tokens as the SenseCV viewer (src/sensecv/templates/index.html). */
+:root{
+  --bg:#0b0f15;--panel:#151b24;--panel-2:#0e131b;--border:#2a323d;
+  --text:#e6edf3;--muted:#9aa6b2;--accent:#6cb0ff;--accent-strong:#388bfd;
+  --red:#ff6b61;--green:#5ed977;--blue:#86c5ff;
+  --gold:#ecc04a;--purple:#c79bff;
+  --left:#86c5ff;--right:#c79bff;--stop:#ff6b61;
+  --fs-xs:13px;--fs-sm:14px;--fs-base:16px;--fs-md:18px;--fs-lg:21px;--fs-xl:26px;
+  --radius:10px;--radius-sm:8px;
+}
+body{background:var(--bg);color:var(--text);
+  font-family:'Inter','SF Pro Text',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  font-size:var(--fs-base);line-height:1.5;letter-spacing:.01em;-webkit-font-smoothing:antialiased;
+  min-height:100vh;display:flex;flex-direction:column}
+.hidden{display:none!important}
+a{color:var(--accent)}
+
+/* ── Header ── */
+header{background:var(--panel);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+header h1{font-size:var(--fs-lg);font-weight:700;letter-spacing:-.01em}
+.badge{background:var(--panel-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:3px 9px;font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.clip-name-badge{color:var(--accent);font-size:var(--fs-sm)}
+.clip-nav{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
+.nav-btn{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s;font-family:inherit}
+.nav-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.nav-btn:disabled{opacity:.3;cursor:default}
+.clip-counter{font-size:var(--fs-sm);color:var(--muted);white-space:nowrap}
+
+/* ── Annotate layout ── */
+.main{display:grid;grid-template-columns:minmax(0,1fr) 440px;flex:1;min-height:0}
+.left{border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
+.right{display:flex;flex-direction:column;overflow-y:auto;max-height:calc(100vh - 52px)}
+@media (max-width:1000px){.main{grid-template-columns:1fr}.right{max-height:none}.left{border-right:none}}
+
+/* Fill the column: header, two timelines, controls and the shortcut bar take ~270 px. */
+.video-wrapper{background:#000;position:relative;width:100%;height:calc(100vh - 270px);min-height:300px;overflow:hidden}
+#video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+.video-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:var(--fs-sm);pointer-events:none}
+.timeline-bar{height:58px;background:#0a0a0f;border-top:1px solid var(--border);cursor:pointer}
+.zoom-bar{height:46px;background:#07070b;border-top:1px solid var(--border);cursor:ew-resize}
+.timeline-bar canvas,.zoom-bar canvas{width:100%;height:100%;display:block}
+.time-display{padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);font-size:var(--fs-sm);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.time-display .num{color:var(--accent);font-variant-numeric:tabular-nums}
+.ctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.play-btn{flex:none;background:#0a0a14;border:1px solid var(--border);color:var(--accent);border-radius:6px;min-width:40px;height:30px;padding:0 8px;cursor:pointer;font-size:var(--fs-sm);line-height:1;transition:all .15s;font-family:inherit}
+.play-btn:hover{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+select{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:var(--fs-sm);font-family:inherit}
+.keys{padding:9px 14px;color:var(--muted);font-size:var(--fs-xs);border-bottom:1px solid var(--border)}
+kbd{background:var(--panel-2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-family:inherit;font-size:12px;color:var(--text)}
+
+/* ── Sections / forms (as in the viewer) ── */
+.section{padding:11px 14px;border-bottom:1px solid var(--border)}
+.section h3{font-size:var(--fs-sm);font-weight:700;text-transform:uppercase;letter-spacing:.07em;opacity:.92;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+.crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.crop-point{background:#0a0a14;border:1px solid var(--border);border-radius:6px;padding:10px}
+.crop-point label{font-size:var(--fs-xs);color:var(--muted);display:block;margin-bottom:4px}
+.crop-time{font-size:var(--fs-lg);font-weight:600;font-variant-numeric:tabular-nums}
+.crop-frame{font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums}
+.set-btn{margin-top:7px;width:100%;padding:6px;font-size:var(--fs-sm);background:var(--panel);border:1px solid var(--border);border-radius:4px;color:var(--text);cursor:pointer;transition:all .15s;font-family:inherit}
+.set-btn:hover{border-color:var(--accent);color:var(--accent)}
+.set-btn.small{width:auto;margin-top:4px;padding:2px 8px;font-size:var(--fs-xs)}
+#start-box{border-color:#56d364}
+#end-box{border-color:#f85149}
+.form-row{display:flex;flex-direction:column;gap:5px;margin-top:10px}
+.form-row>label{font-size:var(--fs-xs);color:var(--muted);letter-spacing:.02em}
+.radio-group{display:flex;flex-wrap:wrap;gap:5px}
+.rchip{border:1px solid var(--border);background:var(--panel);color:var(--muted);border-radius:var(--radius-sm);padding:6px 13px;cursor:pointer;font-size:var(--fs-sm);transition:all .15s;white-space:nowrap;font-family:inherit}
+.rchip:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
+.rchip.active{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent);font-weight:600}
+.rchip:disabled{opacity:.35;cursor:default}
+.cond-desvio{display:none}
+.show-desvio .cond-desvio{display:flex}
+.btn-row{display:flex;gap:6px;margin-top:12px}
+.btn{flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s;background:var(--panel);color:var(--text);font-family:inherit}
+.btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.btn:disabled{opacity:.35;cursor:default}
+.btn.primary{background:var(--accent-strong);border-color:var(--accent-strong);color:#fff}
+.btn.primary:hover:not(:disabled){filter:brightness(1.1);color:#fff}
+.btn.danger{background:#3a1a1a;border-color:#6a2d2d;color:#ff6b6b}
+.input-hint{font-size:var(--fs-xs);color:var(--muted);margin-top:6px}
+.input-hint.err{color:var(--red)}
+textarea{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:8px 11px;font-size:var(--fs-sm);width:100%;font-family:inherit;resize:vertical;min-height:54px}
+textarea:focus{outline:none;border-color:var(--accent)}
+
+/* ── Event list ── */
+.ev-empty{color:var(--muted);font-size:var(--fs-sm)}
+.ev{display:grid;grid-template-columns:6px 1fr auto;gap:10px;align-items:center;background:var(--panel-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:8px 10px;margin-bottom:6px}
+.ev.editing{border-color:var(--accent)}
+.ev .sw{width:6px;align-self:stretch;border-radius:3px}
+.ev .what{font-weight:600;font-size:var(--fs-sm)}
+.ev .when{font-size:var(--fs-xs);color:var(--muted);font-variant-numeric:tabular-nums}
+.ev .acts{display:flex;gap:4px}
+.ev .acts button{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:var(--fs-xs);font-family:inherit}
+.ev .acts button:hover{border-color:var(--accent);color:var(--accent)}
+.ev .acts button.del:hover{border-color:var(--red);color:var(--red)}
+.save-state{font-size:var(--fs-xs);color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
+.save-state.err{color:var(--red)}
+
+/* ── List / login / guide ── */
+.page{padding:18px;max-width:1200px;margin:0 auto;width:100%}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px}
+.login{max-width:440px;margin:60px auto}
+.login input{width:100%;margin:12px 0;background:var(--panel-2);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:9px 11px;font-size:var(--fs-sm);font-family:inherit}
+.muted{color:var(--muted);font-size:var(--fs-sm)}
+.list-tools{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.list-tools .btn{flex:none}
+table{width:100%;border-collapse:collapse;font-size:var(--fs-sm)}
+th{color:var(--muted);font-weight:600;font-size:var(--fs-xs);text-transform:uppercase;letter-spacing:.06em}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)}
+td{font-variant-numeric:tabular-nums}
+tr.row{cursor:pointer}
+tr.row:hover td{background:var(--panel)}
+.st{border-radius:20px;padding:2px 10px;font-size:var(--fs-xs);border:1px solid var(--border);white-space:nowrap}
+.st.pendente{color:var(--muted)}
+.st.andamento{color:var(--gold);border-color:var(--gold)}
+.st.concluido{color:var(--green);border-color:var(--green)}
+.guide h2{font-size:var(--fs-lg);margin-bottom:8px}
+.guide h3{font-size:var(--fs-md);margin:18px 0 6px}
+.guide p,.guide li{font-size:var(--fs-sm);color:var(--text)}
+.guide ul,.guide ol{margin-left:20px}
+.guide li{margin:3px 0}
+.guide table td,.guide table th{padding:5px 8px}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#3a1c1c;border:1px solid var(--red);color:#ffd6d3;padding:10px 16px;border-radius:var(--radius-sm);font-size:var(--fs-sm);z-index:20;max-width:90vw}
+#toast.ok{background:#16301d;border-color:var(--green);color:#d6ffe0}
+</style>
+</head>
+<body>
+<header>
+  <h1>SenseCV · Anotador de clipes</h1>
+  <span class="badge clip-name-badge hidden" id="clip-badge"></span>
+  <div class="clip-nav">
+    <button class="nav-btn hidden" id="back" type="button">☰ Lista</button>
+    <button class="nav-btn hidden" id="btn-prev" type="button">◀ Anterior</button>
+    <span class="clip-counter hidden" id="counter"></span>
+    <button class="nav-btn hidden" id="btn-next" type="button">Próximo ▶</button>
+    <button class="nav-btn hidden" id="btn-guide" type="button">Guia</button>
+    <span class="badge hidden" id="who"></span>
+    <button class="nav-btn hidden" id="logout" type="button">Sair</button>
+  </div>
+</header>
+
+<!-- ░░ Login ░░ -->
+<section id="login" class="page hidden">
+  <div class="card login">
+    <h2>Entrar</h2>
+    <p class="muted">Abra o link pessoal que você recebeu ou cole aqui o seu token.</p>
+    <input id="token" type="password" autocomplete="off" placeholder="Token pessoal" aria-label="Token pessoal">
+    <button class="btn primary" id="signin" type="button">Entrar</button>
+  </div>
+</section>
+
+<!-- ░░ Lista de clipes ░░ -->
+<section id="list" class="page hidden">
+  <div class="card">
+    <strong id="overall"></strong>
+    <p class="muted">Assista cada clipe inteiro e marque quando acontece cada desvio ou parada e de que tipo é.
+      Seu trabalho é salvo automaticamente; pare e continue quando quiser. Em dúvida? Abra o <a href="#" id="link-guide">guia de anotação</a>.</p>
+  </div>
+  <div class="list-tools">
+    <button class="btn primary" id="continue" type="button">Continuar do próximo pendente</button>
+    <label class="muted"><input type="checkbox" id="only-open"> mostrar só os clipes não concluídos</label>
+  </div>
+  <table>
+    <thead><tr><th>Coleta</th><th>Gravação</th><th>Duração</th><th>Situação</th><th>Resultado</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</section>
+
+<!-- ░░ Anotar ░░ -->
+<section id="annot" class="main hidden">
+  <div class="left">
+    <div class="video-wrapper">
+      <video id="video" preload="auto" playsinline muted></video>
+      <div class="video-msg hidden" id="video-msg"></div>
+    </div>
+    <div class="timeline-bar" title="Clique ou arraste para posicionar"><canvas id="timeline"></canvas></div>
+    <div class="zoom-bar" title="Detalhe de ±3 s: arraste para ajustar com precisão"><canvas id="zoomline"></canvas></div>
+    <div class="time-display">
+      <span class="ctl">
+        <button id="btn-play" class="play-btn" type="button" title="Reproduzir/Pausar (Espaço)">▶</button>
+        <button id="btn-back1" class="play-btn" type="button" title="Voltar 1 s (Shift+←)">−1 s</button>
+        <button id="btn-fprev" class="play-btn" type="button" title="Quadro anterior (←)">◀ q</button>
+        <button id="btn-fnext" class="play-btn" type="button" title="Próximo quadro (→)">q ▶</button>
+        <button id="btn-fwd1" class="play-btn" type="button" title="Avançar 1 s (Shift+→)">+1 s</button>
+        <select id="speed" title="Velocidade ([ e ])" aria-label="Velocidade">
+          <option value="0.25">0,25×</option><option value="0.5">0,5×</option>
+          <option value="1" selected>1×</option><option value="1.5">1,5×</option><option value="2">2×</option>
+        </select>
+      </span>
+      <span>Posição: <span class="num" id="t-cur">0.000</span> s / <span class="num" id="t-dur">–</span> s
+        · Quadro <span class="num" id="t-frame">0</span></span>
+    </div>
+    <div class="keys">
+      <kbd>Espaço</kbd> reproduzir · <kbd>←</kbd><kbd>→</kbd> quadro · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s ·
+      <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>D</kbd> desvio · <kbd>P</kbd> parada · <kbd>Q</kbd>/<kbd>E</kbd> esquerda/direita ·
+      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>0</kbd> obstáculo · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar ·
+      <kbd>[</kbd><kbd>]</kbd> velocidade · <kbd>Enter</kbd> concluir e próximo
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="section" id="draft-section">
+      <h3><span id="draft-title">Marcar evento</span></h3>
+      <div class="crop-grid">
+        <div class="crop-point" id="start-box">
+          <label>Início (T1)</label>
+          <div class="crop-time" id="start-disp">–</div>
+          <div class="crop-frame" id="start-frame">&nbsp;</div>
+          <button class="set-btn" id="btn-start" type="button">▶ Marcar início (I)</button>
+          <button class="set-btn small" id="go-start" type="button">ir</button>
+        </div>
+        <div class="crop-point" id="end-box">
+          <label>Fim (T2)</label>
+          <div class="crop-time" id="end-disp">–</div>
+          <div class="crop-frame" id="end-frame">&nbsp;</div>
+          <button class="set-btn" id="btn-end" type="button">■ Marcar fim (O)</button>
+          <button class="set-btn small" id="go-end" type="button">ir</button>
+          <button class="set-btn small" id="clear-end" type="button">limpar</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Tipo de evento</label>
+        <div class="radio-group" id="rg-kind">
+          <button class="rchip" data-val="desvio" type="button">Desvio (D)</button>
+          <button class="rchip" data-val="parada" type="button">Parada (P)</button>
+        </div>
+      </div>
+      <div class="form-row cond-desvio">
+        <label>Direção do desvio (para onde a pessoa vai)</label>
+        <div class="radio-group" id="rg-side">
+          <button class="rchip" data-val="esquerda" type="button">Esquerda (Q)</button>
+          <button class="rchip" data-val="direita" type="button">Direita (E)</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Posição do obstáculo no caminho (opcional)</label>
+        <div class="radio-group" id="rg-obstacle">
+          <button class="rchip" data-val="esquerda" type="button">Esquerda (1)</button>
+          <button class="rchip" data-val="centro" type="button">Centro (2)</button>
+          <button class="rchip" data-val="direita" type="button">Direita (3)</button>
+          <button class="rchip" data-val="nao_visivel" type="button">Não visível (0)</button>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="btn-add" type="button">＋ Adicionar evento (A)</button>
+        <button class="btn hidden" id="btn-cancel" type="button">Cancelar edição</button>
+      </div>
+      <div class="input-hint" id="draft-hint">Marque o início e o fim, escolha o tipo e adicione.</div>
+    </div>
+
+    <div class="section">
+      <h3><span>Eventos do clipe (<span id="ev-count">0</span>)</span><span class="save-state" id="save-state"></span></h3>
+      <div id="ev-list"></div>
+    </div>
+
+    <div class="section">
+      <h3>Conclusão do clipe</h3>
+      <div class="form-row" style="margin-top:0">
+        <label>Se não houver nenhum evento, diga por quê</label>
+        <div class="radio-group" id="rg-verdict">
+          <button class="rchip" data-val="sem_evento" type="button">Sem evento (caminhada livre)</button>
+          <button class="rchip" data-val="inutilizavel" type="button">Inutilizável</button>
+        </div>
+      </div>
+      <div class="form-row">
+        <label for="note">Observação (opcional)</label>
+        <textarea id="note" maxlength="500" placeholder="Algo estranho neste clipe?"></textarea>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="btn-done" type="button">✓ Concluir e ir ao próximo (Enter)</button>
+        <button class="btn hidden" id="btn-reopen" type="button">Reabrir clipe</button>
+      </div>
+      <div class="input-hint" id="done-hint"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ░░ Guia ░░ -->
+<section id="guide" class="page guide hidden">
+  <div class="card">
+    <h2>Guia de anotação de clipes</h2>
+    <p>Cada clipe é uma gravação inteira de uma pessoa caminhando com o celular. Você vai assistir ao clipe
+      todo e marcar <strong>quando</strong> acontece cada evento e <strong>de que tipo</strong> ele é.
+      Ninguém vê o trabalho dos outros anotadores, e nenhum rótulo existente é mostrado.</p>
+
+    <h3>Passo a passo</h3>
+    <ol>
+      <li>Assista ao clipe inteiro uma vez em 1× para entender o que acontece.</li>
+      <li>Volte ao começo do evento e use <kbd>←</kbd> <kbd>→</kbd> (quadro a quadro) ou a velocidade 0,25× para achar o momento exato.</li>
+      <li>Marque o <strong>início</strong> (<kbd>I</kbd>) e o <strong>fim</strong> (<kbd>O</kbd>), escolha o tipo e clique em <strong>Adicionar evento</strong> (<kbd>A</kbd>).</li>
+      <li>Repita para cada evento do clipe. Um clipe pode ter mais de um evento; eles não podem se sobrepor.</li>
+      <li>Clique em <strong>Concluir e ir ao próximo</strong> (<kbd>Enter</kbd>). Sem nenhum evento, escolha antes <em>Sem evento</em> ou <em>Inutilizável</em>.</li>
+    </ol>
+
+    <h3>Tipos de evento</h3>
+    <ul>
+      <li><strong>Desvio</strong>: a pessoa sai lateralmente da trajetória para contornar um obstáculo.
+        A <strong>direção</strong> é o lado para onde a pessoa vai (não o lado do obstáculo): se ela contorna pela esquerda, é <em>esquerda</em>.</li>
+      <li><strong>Parada</strong>: a pessoa diminui e para diante de um obstáculo, sem contorná-lo.</li>
+    </ul>
+
+    <h3>Os dois momentos</h3>
+    <table>
+      <thead><tr><th></th><th>Início (T1)</th><th>Fim (T2)</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Desvio</strong></td><td>primeiro quadro em que a imagem começa a girar ou deslizar para o lado do desvio</td>
+          <td>quadro em que a trajetória volta a ficar estável (reta) depois de contornar; obrigatório</td></tr>
+        <tr><td><strong>Parada</strong></td><td>primeiro quadro em que a pessoa começa a frear</td>
+          <td>quadro em que ela fica totalmente parada; opcional (deixe em branco se o vídeo acabar antes)</td></tr>
+      </tbody>
+    </table>
+
+    <h3>Posição do obstáculo</h3>
+    <p>Onde o obstáculo está no caminho no momento do início: esquerda, centro ou direita. Use <em>Não visível</em>
+      se não der para ver o obstáculo. Este campo é opcional.</p>
+
+    <h3>Clipes sem evento</h3>
+    <ul>
+      <li><strong>Sem evento</strong>: caminhada livre, sem desvio e sem parada.</li>
+      <li><strong>Inutilizável</strong>: vídeo preto, corrompido, câmera apontando para o chão o tempo todo, ou impossível de julgar.</li>
+    </ul>
+    <p class="muted">Desconsidere o começo e o fim da gravação, quando a pessoa está ligando ou desligando a câmera.</p>
+
+    <h3>Atalhos</h3>
+    <table>
+      <tbody>
+        <tr><td><kbd>Espaço</kbd></td><td>reproduzir / pausar</td><td><kbd>I</kbd> / <kbd>O</kbd></td><td>marcar início / fim</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>um quadro</td><td><kbd>D</kbd> / <kbd>P</kbd></td><td>desvio / parada</td></tr>
+        <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>um segundo</td><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>esquerda / direita</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd></td><td>obstáculo esquerda / centro / direita / não visível</td></tr>
+        <tr><td><kbd>A</kbd></td><td>adicionar / salvar evento</td><td><kbd>Esc</kbd></td><td>limpar marcas / cancelar edição</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>concluir e ir ao próximo</td><td></td><td></td></tr>
+      </tbody>
+    </table>
+    <div class="btn-row" style="max-width:320px"><button class="btn primary" id="guide-done" type="button">Entendi, começar</button></div>
+  </div>
+</section>
+
+<div id="toast" class="hidden"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const GUIDE_KEY = "guia_clipes_visto_v1";
+const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
+const ZOOM_HALF_S = 3;
+const KIND_NAMES = { desvio: "Desvio", parada: "Parada" };
+const SIDE_NAMES = { esquerda: "esquerda", direita: "direita" };
+const OBSTACLE_NAMES = { esquerda: "obstáculo à esquerda", centro: "obstáculo no centro",
+  direita: "obstáculo à direita", nao_visivel: "obstáculo não visível" };
+const STATUS_NAMES = { pendente: "Pendente", andamento: "Em andamento", concluido: "Concluído" };
+const VERDICT_NAMES = { sem_evento: "Sem evento", inutilizavel: "Inutilizável" };
+const OBSTACLE_KEYS = { "1": "esquerda", "2": "centro", "3": "direita", "0": "nao_visivel" };
+const COLORS = { esquerda: "#86c5ff", direita: "#c79bff", parada: "#ff6b61" };
+
+const video = $("video");
+const state = {
+  view: "login", returnTo: "list", clips: [], clip: null,
+  ann: { events: [], verdict: null, done: false, note: "" },
+  draft: null, editing: null,
+};
+const save = { running: false, pending: null, ok: true, waiters: [] };
+const SAVE_RETRY_MIN_MS = 1000;
+const SAVE_RETRY_MAX_MS = 15000;
+
+// ── utilidades ─────────────────────────────────
+function toast(message, ok) {
+  const el = $("toast");
+  el.textContent = message;
+  el.classList.toggle("ok", !!ok);
+  el.classList.remove("hidden");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.add("hidden"), 4000);
+}
+
+/** fetch + JSON. Errors carry ``status`` (absent when the network failed). */
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const fail = (message) => Object.assign(new Error(message), { status: response.status });
+  if (response.status === 401 && path !== "/api/login") { show("login"); throw fail("Sessão encerrada."); }
+  let body;
+  try { body = await response.json(); } catch (error) { throw fail("Resposta inesperada do servidor."); }
+  if (!response.ok) throw fail(body.error || "Erro inesperado.");
+  return body;
+}
+
+function fmt(t) { return t == null ? "–" : t.toFixed(3); }
+function fmtDur(s) { const m = Math.floor(s / 60); return `${m}:${String(Math.round(s % 60)).padStart(2, "0")}`; }
+function fps() { return state.clip ? state.clip.fps : 30; }
+function duration() { return (state.clip && (video.duration || state.clip.duration_s)) || 0; }
+function frameAt(t) { return Math.floor(t * fps() + 1e-6); }
+function round3(t) { return Math.round(t * 1000) / 1000; }
+function lastOf(e) { return e.end_s == null ? e.start_s : e.end_s; }
+function eventColor(e) { return e.kind === "parada" ? COLORS.parada : COLORS[e.side] || "#9aa6b2"; }
+function eventName(e) {
+  return e.kind === "desvio" ? `Desvio à ${SIDE_NAMES[e.side]}` : KIND_NAMES[e.kind];
+}
+function emptyDraft() { return { start_s: null, end_s: null, kind: null, side: null, obstacle: null }; }
+
+function show(view) {
+  state.view = view;
+  for (const id of ["login", "list", "annot", "guide"]) $(id).classList.toggle("hidden", id !== view);
+  const signedIn = view !== "login";
+  for (const id of ["btn-prev", "btn-next", "counter", "clip-badge"]) $(id).classList.toggle("hidden", view !== "annot");
+  $("back").classList.toggle("hidden", view === "list" || view === "login");
+  $("btn-guide").classList.toggle("hidden", !signedIn || view === "guide");
+  $("logout").classList.toggle("hidden", !signedIn);
+  $("who").classList.toggle("hidden", !signedIn);
+  if (view !== "annot") video.pause();
+  if (view === "annot") drawTimelines();
+}
+
+function guideSeen() { try { return localStorage.getItem(GUIDE_KEY) === "1"; } catch (e) { return false; } }
+function markGuideSeen() { try { localStorage.setItem(GUIDE_KEY, "1"); } catch (e) { /* modo privado */ } }
+function openGuide() { state.returnTo = state.view === "annot" ? "annot" : "list"; show("guide"); window.scrollTo(0, 0); }
+async function closeGuide() {
+  markGuideSeen();
+  if (state.returnTo === "annot" && state.clip) show("annot"); else await loadList();
+}
+
+// ── lista ──────────────────────────────────────
+async function loadList() {
+  await waitSaved();
+  state.clips = (await api("/api/clips")).clips;
+  renderList();
+  show("list");
+}
+
+function cell(tr, content) {
+  const td = document.createElement("td");
+  if (content instanceof Node) td.appendChild(content); else td.textContent = content;
+  tr.appendChild(td);
+}
+
+function statusChip(status) {
+  const span = document.createElement("span");
+  span.className = "st " + status;
+  span.textContent = STATUS_NAMES[status] || status;
+  return span;
+}
+
+function resultText(c) {
+  if (c.verdict && VERDICT_NAMES[c.verdict]) return VERDICT_NAMES[c.verdict];
+  return c.events ? `${c.events} evento${c.events > 1 ? "s" : ""}` : "–";
+}
+
+function renderList() {
+  const onlyOpen = $("only-open").checked;
+  const done = state.clips.filter((c) => c.status === "concluido").length;
+  const pct = state.clips.length ? Math.round((100 * done) / state.clips.length) : 0;
+  $("overall").textContent = `Progresso: ${done} de ${state.clips.length} clipes concluídos (${pct}%)`;
+  const rows = $("rows");
+  rows.replaceChildren();
+  for (const c of state.clips) {
+    if (onlyOpen && c.status === "concluido") continue;
+    const tr = document.createElement("tr");
+    tr.className = "row";
+    cell(tr, c.location);
+    cell(tr, c.recording);
+    cell(tr, fmtDur(c.duration_s));
+    cell(tr, statusChip(c.status));
+    cell(tr, resultText(c));
+    tr.addEventListener("click", () => openClip(c.clip_id));
+    rows.appendChild(tr);
+  }
+}
+
+function nextPendingAfter(clipId) {
+  const here = state.clips.findIndex((c) => c.clip_id === clipId);
+  const open = state.clips.filter((c) => c.status !== "concluido");
+  return open.find((c) => state.clips.indexOf(c) > here) || open.find((c) => c.clip_id !== clipId) || null;
+}
+
+// ── clipe ──────────────────────────────────────
+async function openClip(clipId) {
+  if (state.opening) return;
+  state.opening = true;
+  try { await loadClip(clipId); } finally { state.opening = false; }
+}
+
+async function loadClip(clipId) {
+  if (save.running) toast("Aguardando o salvamento terminar…", true);
+  await waitSaved();
+  let clip;
+  try { clip = await api("/api/clips/" + encodeURIComponent(clipId)); }
+  catch (error) { toast(error.message); return; }
+  state.clip = clip;
+  state.ann = { ...clip.annotation, events: clip.annotation.events.map((e) => ({ ...e })) };
+  state.draft = emptyDraft();
+  state.editing = null;
+  $("clip-badge").textContent = `${clip.location} / ${clip.recording}`;
+  const idx = state.clips.findIndex((c) => c.clip_id === clipId);
+  $("counter").textContent = idx >= 0 ? `${idx + 1} / ${state.clips.length}` : "";
+  $("btn-prev").disabled = idx <= 0;
+  $("btn-next").disabled = idx < 0 || idx >= state.clips.length - 1;
+  $("video-msg").classList.add("hidden");
+  video.src = clip.video_url;
+  video.playbackRate = Number($("speed").value);
+  $("note").value = state.ann.note || "";
+  setSaveState("");
+  show("annot");
+  renderAll();
+}
+
+function setVideoMessage(text) {
+  $("video-msg").textContent = text;
+  $("video-msg").classList.toggle("hidden", !text);
+}
+
+video.addEventListener("loadedmetadata", () => { video.playbackRate = Number($("speed").value); renderTime(); drawTimelines(); });
+video.addEventListener("error", () => { if (video.getAttribute("src")) setVideoMessage("Não foi possível carregar o vídeo. Recarregue a página."); });
+video.addEventListener("waiting", () => setVideoMessage("Carregando…"));
+video.addEventListener("canplay", () => setVideoMessage(""));
+video.addEventListener("play", () => { $("btn-play").textContent = "❚❚"; tick(); });
+video.addEventListener("pause", () => { $("btn-play").textContent = "▶"; renderTime(); drawTimelines(); });
+video.addEventListener("seeked", () => { renderTime(); drawTimelines(); });
+
+function tick() {
+  renderTime();
+  drawTimelines();
+  if (!video.paused && !video.ended) requestAnimationFrame(tick);
+}
+
+function seek(t) {
+  video.currentTime = Math.max(0, Math.min(duration(), t));
+  renderTime();
+  drawTimelines();
+}
+function stepFrames(n) {
+  video.pause();
+  const f = Math.max(0, frameAt(video.currentTime) + n);
+  seek((f + 0.5) / fps());  // meio do quadro: o número do quadro fica estável
+}
+function togglePlay() { if (video.paused) video.play().catch(() => {}); else video.pause(); }
+function changeSpeed(delta) {
+  const i = SPEEDS.indexOf(Number($("speed").value));
+  const next = SPEEDS[Math.max(0, Math.min(SPEEDS.length - 1, i + delta))];
+  $("speed").value = String(next);
+  video.playbackRate = next;
+}
+
+function renderTime() {
+  $("t-cur").textContent = fmt(video.currentTime || 0);
+  $("t-dur").textContent = duration() ? fmt(duration()) : "–";
+  $("t-frame").textContent = String(frameAt(video.currentTime || 0));
+}
+
+// ── linhas do tempo ────────────────────────────
+function fitCanvas(canvas) {
+  const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
+  const ratio = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * ratio) || canvas.height !== Math.round(h * ratio)) {
+    canvas.width = Math.round(w * ratio);
+    canvas.height = Math.round(h * ratio);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { ctx, w, h };
+}
+
+function drawRange(canvas, t0, t1, { tickEvery, labelEvery, frames }) {
+  const { ctx, w, h } = fitCanvas(canvas);
+  const span = Math.max(t1 - t0, 1e-6);
+  const x = (t) => ((t - t0) / span) * w;
+  ctx.fillStyle = canvas.id === "zoomline" ? "#07070b" : "#0a0a0f";
+  ctx.fillRect(0, 0, w, h);
+  if (!state.clip) return;
+  // quadros (só no detalhe)
+  if (frames) {
+    ctx.fillStyle = "rgba(154,166,178,.18)";
+    for (let f = Math.max(0, Math.floor(t0 * fps())); f / fps() <= t1; f++) ctx.fillRect(x(f / fps()), h - 6, 1, 6);
+  }
+  // marcas de tempo
+  ctx.font = "10px Inter, Segoe UI, sans-serif";
+  for (let t = Math.ceil(t0 / tickEvery) * tickEvery; t <= t1 + 1e-9; t += tickEvery) {
+    const labelled = Math.abs(t / labelEvery - Math.round(t / labelEvery)) < 1e-6;
+    ctx.fillStyle = labelled ? "rgba(154,166,178,.55)" : "rgba(154,166,178,.25)";
+    ctx.fillRect(x(t), 0, 1, labelled ? 9 : 5);
+    if (labelled) ctx.fillText(labelEvery < 1 ? t.toFixed(1) : String(Math.round(t)), x(t) + 3, 10);
+  }
+  // eventos salvos
+  state.ann.events.forEach((e, i) => {
+    const color = eventColor(e);
+    const xs = x(e.start_s), xe = x(lastOf(e));
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = color;
+    ctx.fillRect(xs, 12, Math.max(2, xe - xs), h - 18);
+    ctx.globalAlpha = 1;
+    ctx.fillRect(xs, 12, Math.max(2, xe - xs), 4);
+    ctx.fillRect(xs - 1, 12, 2, h - 18);
+    if (e.end_s == null) { ctx.beginPath(); ctx.moveTo(xs, 12); ctx.lineTo(xs + 8, 16); ctx.lineTo(xs, 20); ctx.fill(); }
+    if (state.editing === i) { ctx.strokeStyle = "#e6edf3"; ctx.lineWidth = 1.5; ctx.strokeRect(xs, 12, Math.max(2, xe - xs), h - 18); }
+  });
+  // marcas em edição
+  const d = state.draft;
+  if (d && d.start_s != null && d.end_s != null) {
+    ctx.fillStyle = "rgba(88,166,255,.15)";
+    ctx.fillRect(x(d.start_s), 0, x(d.end_s) - x(d.start_s), h);
+  }
+  ctx.font = "bold 10px monospace";
+  if (d && d.start_s != null) { ctx.fillStyle = "#56d364"; ctx.fillRect(x(d.start_s) - 1, 0, 2, h); ctx.fillText("I", x(d.start_s) + 3, h - 8); }
+  if (d && d.end_s != null) { ctx.fillStyle = "#f85149"; ctx.fillRect(x(d.end_s) - 1, 0, 2, h); ctx.fillText("O", x(d.end_s) + 3, h - 8); }
+  // cursor de reprodução
+  const px = x(video.currentTime || 0);
+  ctx.fillStyle = "#e3b341";
+  ctx.fillRect(px - 1, 0, 2, h);
+  ctx.beginPath(); ctx.moveTo(px - 5, 0); ctx.lineTo(px + 5, 0); ctx.lineTo(px, 7); ctx.closePath(); ctx.fill();
+}
+
+function drawTimelines() {
+  if (state.view !== "annot" || !state.clip) return;
+  const dur = duration();
+  const labelEvery = dur > 120 ? 10 : dur > 40 ? 5 : 1;
+  drawRange($("timeline"), 0, dur, { tickEvery: labelEvery / (labelEvery === 1 ? 2 : 5), labelEvery, frames: false });
+  const t = video.currentTime || 0;
+  const t0 = Math.max(0, Math.min(t - ZOOM_HALF_S, dur - 2 * ZOOM_HALF_S));
+  drawRange($("zoomline"), t0, Math.min(dur, t0 + 2 * ZOOM_HALF_S), { tickEvery: 0.1, labelEvery: 0.5, frames: true });
+}
+
+function attachScrub(canvas, rangeOf) {
+  let range = null;  // fixado no clique: o detalhe não desliza enquanto se arrasta
+  const timeAt = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    return range[0] + ((event.clientX - rect.left) / rect.width) * (range[1] - range[0]);
+  };
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!state.clip) return;
+    range = rangeOf();
+    canvas.setPointerCapture(event.pointerId);
+    video.pause();
+    seek(timeAt(event));
+  });
+  canvas.addEventListener("pointermove", (event) => { if (range) seek(timeAt(event)); });
+  canvas.addEventListener("pointerup", () => { range = null; });
+}
+attachScrub($("timeline"), () => [0, duration()]);
+attachScrub($("zoomline"), () => {
+  const dur = duration(), t = video.currentTime || 0;
+  const t0 = Math.max(0, Math.min(t - ZOOM_HALF_S, dur - 2 * ZOOM_HALF_S));
+  return [t0, Math.min(dur, t0 + 2 * ZOOM_HALF_S)];
+});
+new ResizeObserver(drawTimelines).observe($("timeline").parentElement);
+
+// ── formulário do evento ───────────────────────
+function setChips(groupId, value, disabled) {
+  for (const btn of $(groupId).querySelectorAll(".rchip")) {
+    btn.classList.toggle("active", btn.dataset.val === value);
+    btn.disabled = !!disabled;
+  }
+}
+
+function draftProblem() {
+  const d = state.draft;
+  if (d.start_s == null) return "Marque o início (I).";
+  if (!d.kind) return "Escolha o tipo: desvio (D) ou parada (P).";
+  if (d.kind === "desvio" && !d.side) return "Escolha a direção do desvio: esquerda (Q) ou direita (E).";
+  if (d.kind === "desvio" && d.end_s == null) return "Um desvio precisa do fim (O).";
+  if (d.end_s != null && d.end_s <= d.start_s) return "O fim precisa vir depois do início.";
+  const mine = { start_s: d.start_s, end_s: d.end_s };
+  const clash = state.ann.events.find((e, i) => i !== state.editing &&
+    !(lastOf(mine) < e.start_s || mine.start_s > lastOf(e)));
+  if (clash) return `Este trecho se sobrepõe a outro evento (${eventName(clash)} em ${fmt(clash.start_s)} s).`;
+  return "";
+}
+
+function renderDraft() {
+  const d = state.draft;
+  $("start-disp").textContent = d.start_s == null ? "–" : fmt(d.start_s) + " s";
+  $("end-disp").textContent = d.end_s == null ? "–" : fmt(d.end_s) + " s";
+  $("start-frame").textContent = d.start_s == null ? " " : "quadro " + frameAt(d.start_s);
+  $("end-frame").textContent = d.end_s == null ? " " : "quadro " + frameAt(d.end_s);
+  $("go-start").disabled = d.start_s == null;
+  $("go-end").disabled = d.end_s == null;
+  $("clear-end").disabled = d.end_s == null;
+  setChips("rg-kind", d.kind);
+  setChips("rg-side", d.side);
+  setChips("rg-obstacle", d.obstacle);
+  $("draft-section").classList.toggle("show-desvio", d.kind === "desvio");
+  const editing = state.editing != null;
+  $("draft-title").textContent = editing ? `Editando evento ${state.editing + 1}` : "Marcar evento";
+  $("btn-add").textContent = editing ? "✓ Salvar alterações (A)" : "＋ Adicionar evento (A)";
+  $("btn-cancel").classList.toggle("hidden", !editing);
+  const problem = draftProblem();
+  const untouched = !editing && d.start_s == null && d.end_s == null && !d.kind;
+  $("btn-add").disabled = !!problem || state.ann.done;
+  $("draft-hint").textContent = state.ann.done ? "Clipe concluído. Reabra-o para editar."
+    : untouched ? "Marque o início e o fim, escolha o tipo e adicione." : problem || "Pronto para adicionar.";
+  $("draft-hint").classList.toggle("err", !!problem && !untouched && !state.ann.done);
+}
+
+function renderEvents() {
+  const list = $("ev-list");
+  list.replaceChildren();
+  $("ev-count").textContent = String(state.ann.events.length);
+  if (!state.ann.events.length) {
+    const p = document.createElement("div");
+    p.className = "ev-empty";
+    p.textContent = "Nenhum evento marcado ainda.";
+    list.appendChild(p);
+  }
+  state.ann.events.forEach((e, i) => {
+    const row = document.createElement("div");
+    row.className = "ev" + (state.editing === i ? " editing" : "");
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = eventColor(e);
+    const body = document.createElement("div");
+    const what = document.createElement("div");
+    what.className = "what";
+    what.textContent = `${i + 1}. ${eventName(e)}`;
+    const when = document.createElement("div");
+    when.className = "when";
+    const length = e.end_s == null ? "sem fim" : `${(e.end_s - e.start_s).toFixed(2)} s`;
+    when.textContent = `${fmt(e.start_s)} → ${e.end_s == null ? "–" : fmt(e.end_s)} s (${length})` +
+      (e.obstacle ? ` · ${OBSTACLE_NAMES[e.obstacle]}` : "");
+    body.append(what, when);
+    const acts = document.createElement("div");
+    acts.className = "acts";
+    const mk = (label, title, fn, cls) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label; b.title = title;
+      if (cls) b.className = cls;
+      b.addEventListener("click", fn);
+      acts.appendChild(b);
+      return b;
+    };
+    mk("▶", "Assistir este trecho", () => playRange(e));
+    const edit = mk("Editar", "Editar este evento", () => startEdit(i));
+    const del = mk("Excluir", "Excluir este evento", () => deleteEvent(i), "del");
+    edit.disabled = del.disabled = state.ann.done;
+    row.append(sw, body, acts);
+    list.appendChild(row);
+  });
+}
+
+function renderConclusion() {
+  const hasEvents = state.ann.events.length > 0;
+  setChips("rg-verdict", hasEvents ? null : state.ann.verdict, hasEvents || state.ann.done);
+  $("note").disabled = state.ann.done;
+  $("btn-done").classList.toggle("hidden", state.ann.done);
+  $("btn-reopen").classList.toggle("hidden", !state.ann.done);
+  const ready = hasEvents || !!state.ann.verdict;
+  $("btn-done").disabled = !ready;
+  $("done-hint").classList.remove("err");
+  $("done-hint").textContent = state.ann.done ? "Clipe concluído ✓" : hasEvents
+    ? "Quando todos os eventos estiverem marcados, conclua o clipe."
+    : "Sem eventos: escolha “Sem evento” ou “Inutilizável” para concluir.";
+}
+
+function renderAll() { renderDraft(); renderEvents(); renderConclusion(); renderTime(); drawTimelines(); }
+
+function playRange(e) {
+  seek(Math.max(0, e.start_s - 1));
+  const stopAt = lastOf(e) + 0.5;
+  const stop = () => { if (video.currentTime >= stopAt) { video.pause(); video.removeEventListener("timeupdate", stop); } };
+  video.addEventListener("timeupdate", stop);
+  video.addEventListener("pause", () => video.removeEventListener("timeupdate", stop), { once: true });
+  video.play().catch(() => {});
+}
+
+function markStart() { if (state.ann.done) return; state.draft.start_s = round3(video.currentTime); renderDraft(); drawTimelines(); }
+function markEnd() { if (state.ann.done) return; state.draft.end_s = round3(video.currentTime); renderDraft(); drawTimelines(); }
+function setDraft(field, value) {
+  if (state.ann.done) return;
+  state.draft[field] = state.draft[field] === value && field === "obstacle" ? null : value;
+  if (field === "kind" && value === "parada") state.draft.side = null;
+  if (field === "side") state.draft.kind = "desvio";
+  renderDraft();
+}
+
+function clearDraft() { state.draft = emptyDraft(); state.editing = null; renderAll(); }
+
+function startEdit(i) {
+  const e = state.ann.events[i];
+  state.editing = i;
+  state.draft = { start_s: e.start_s, end_s: e.end_s, kind: e.kind, side: e.side, obstacle: e.obstacle };
+  seek(e.start_s);
+  renderAll();
+}
+
+function sortEvents(events) { return events.sort((a, b) => a.start_s - b.start_s || lastOf(a) - lastOf(b)); }
+
+function commitDraft() {
+  if (state.ann.done || draftProblem()) { renderDraft(); return; }
+  const d = state.draft;
+  const event = { kind: d.kind, side: d.kind === "desvio" ? d.side : null, obstacle: d.obstacle,
+                  start_s: d.start_s, end_s: d.end_s };
+  const events = state.ann.events.slice();
+  if (state.editing != null) events[state.editing] = event; else events.push(event);
+  state.ann = { ...state.ann, events: sortEvents(events), verdict: "eventos" };
+  state.draft = emptyDraft();
+  state.editing = null;
+  renderAll();
+  queueSave();
+}
+
+function deleteEvent(i) {
+  if (state.ann.done) return;
+  const e = state.ann.events[i];
+  if (!confirm(`Excluir o evento ${i + 1} (${eventName(e)} em ${fmt(e.start_s)} s)?`)) return;
+  const events = state.ann.events.filter((_, j) => j !== i);
+  state.ann = { ...state.ann, events, verdict: events.length ? "eventos" : null };
+  if (state.editing === i) { state.editing = null; state.draft = emptyDraft(); }
+  else if (state.editing != null && state.editing > i) state.editing -= 1;
+  renderAll();
+  queueSave();
+}
+
+function setVerdict(value) {
+  if (state.ann.done || state.ann.events.length) return;
+  state.ann = { ...state.ann, verdict: state.ann.verdict === value ? null : value };
+  renderConclusion();
+  queueSave();
+}
+
+async function finishClip() {
+  if (state.opening) return;
+  if (state.ann.done) { await goNext(); return; }
+  if (!state.ann.events.length && !state.ann.verdict) { renderConclusion(); toast($("done-hint").textContent); return; }
+  const d = state.draft;
+  if (d.start_s != null || d.end_s != null || state.editing != null) {
+    if (!confirm("Há marcas não adicionadas no formulário. Concluir mesmo assim e descartá-las?")) return;
+    state.draft = emptyDraft();
+    state.editing = null;
+  }
+  state.ann = { ...state.ann, done: true, note: $("note").value };
+  renderAll();
+  queueSave();
+  if (!(await waitSaved())) return;
+  await goNext();
+}
+
+function reopenClip() { state.ann = { ...state.ann, done: false }; renderAll(); queueSave(); }
+
+async function goNext() {
+  if (!(await waitSaved())) { toast("A última alteração foi recusada; confira o clipe antes de seguir."); return; }
+  state.clips = (await api("/api/clips")).clips;
+  const next = nextPendingAfter(state.clip.clip_id);
+  if (next) openClip(next.clip_id);
+  else { toast("Todos os clipes estão concluídos — obrigado!", true); loadList(); }
+}
+
+function neighbour(delta) {
+  const idx = state.clips.findIndex((c) => c.clip_id === state.clip.clip_id);
+  const target = state.clips[idx + delta];
+  if (target) openClip(target.clip_id);
+}
+
+// ── salvamento (sempre o documento inteiro, o último vence) ──
+function setSaveState(text, isError) {
+  $("save-state").textContent = text;
+  $("save-state").classList.toggle("err", !!isError);
+}
+
+/** Fotografa o clipe e o documento agora: o que vai ao servidor é sempre a
+ *  versão do clipe em que a edição foi feita, mesmo se a tela mudar depois. */
+function queueSave() {
+  save.pending = {
+    clipId: state.clip.clip_id,
+    body: { events: state.ann.events.map(({ kind, side, obstacle, start_s, end_s }) =>
+      ({ kind, side, obstacle, start_s, end_s })), verdict: state.ann.verdict,
+      done: state.ann.done, note: $("note").value },
+  };
+  if (!save.running) runSave();
+}
+
+/** Rede fora do ar, sessão expirada, excesso de tentativas ou falha do servidor:
+ *  manter a edição e tentar de novo. Recusa de validação: voltar ao servidor. */
+function retryable(error) { return !error.status || error.status === 401 || error.status === 429 || error.status >= 500; }
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function runSave() {
+  save.running = true;
+  let delay = SAVE_RETRY_MIN_MS;
+  while (save.pending) {
+    const job = save.pending;
+    setSaveState("Salvando…");
+    try {
+      const reply = await api(`/api/clips/${encodeURIComponent(job.clipId)}/annotation`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(job.body) });
+      if (save.pending === job) save.pending = null;
+      delay = SAVE_RETRY_MIN_MS;
+      const entry = state.clips.find((c) => c.clip_id === job.clipId);
+      if (entry) Object.assign(entry, { status: reply.annotation.status, events: reply.annotation.events.length, verdict: reply.annotation.verdict });
+      if (!save.pending && state.clip && state.clip.clip_id === job.clipId) {
+        state.ann = { ...reply.annotation, events: reply.annotation.events.map((e) => ({ ...e })) };
+        renderEvents(); renderConclusion(); drawTimelines();
+      }
+      setSaveState("Salvo ✓");
+    } catch (error) {
+      if (retryable(error)) {
+        setSaveState(`Não salvo — tentando de novo em ${Math.round(delay / 1000)} s…`, true);
+        await sleep(delay);
+        delay = Math.min(delay * 2, SAVE_RETRY_MAX_MS);
+        continue;  // save.pending ainda guarda esta edição (ou uma mais nova)
+      }
+      if (save.pending === job) save.pending = null;
+      save.ok = false;
+      setSaveState("Erro ao salvar", true);
+      toast(error.message);
+      if (state.clip && state.clip.clip_id === job.clipId) await resync(job.clipId);
+    }
+  }
+  save.running = false;
+  const ok = save.ok;
+  save.ok = true;  // a falha vale só para quem estava esperando por ela
+  const waiters = save.waiters;
+  save.waiters = [];
+  waiters.forEach((resolve) => resolve(ok));
+}
+
+/** Espera os salvamentos pendentes; devolve false se algum foi recusado. */
+function waitSaved() {
+  if (!save.running) return Promise.resolve(true);
+  return new Promise((resolve) => save.waiters.push(resolve));
+}
+
+async function resync(clipId) {
+  try {
+    const clip = await api("/api/clips/" + encodeURIComponent(clipId));
+    state.ann = { ...clip.annotation, events: clip.annotation.events.map((e) => ({ ...e })) };
+    $("note").value = state.ann.note || "";
+    renderAll();
+  } catch (error) { /* o aviso já foi mostrado */ }
+}
+
+// ── eventos da interface ───────────────────────
+$("btn-play").addEventListener("click", togglePlay);
+$("btn-fprev").addEventListener("click", () => stepFrames(-1));
+$("btn-fnext").addEventListener("click", () => stepFrames(1));
+$("btn-back1").addEventListener("click", () => seek(video.currentTime - 1));
+$("btn-fwd1").addEventListener("click", () => seek(video.currentTime + 1));
+$("speed").addEventListener("change", () => { video.playbackRate = Number($("speed").value); });
+$("btn-start").addEventListener("click", markStart);
+$("btn-end").addEventListener("click", markEnd);
+$("go-start").addEventListener("click", () => { video.pause(); seek(state.draft.start_s); });
+$("go-end").addEventListener("click", () => { video.pause(); seek(state.draft.end_s); });
+$("clear-end").addEventListener("click", () => { state.draft.end_s = null; renderDraft(); drawTimelines(); });
+for (const [group, field] of [["rg-kind", "kind"], ["rg-side", "side"], ["rg-obstacle", "obstacle"]])
+  for (const btn of $(group).querySelectorAll(".rchip")) btn.addEventListener("click", () => setDraft(field, btn.dataset.val));
+for (const btn of $("rg-verdict").querySelectorAll(".rchip")) btn.addEventListener("click", () => setVerdict(btn.dataset.val));
+$("btn-add").addEventListener("click", commitDraft);
+$("btn-cancel").addEventListener("click", clearDraft);
+$("btn-done").addEventListener("click", finishClip);
+$("btn-reopen").addEventListener("click", reopenClip);
+$("note").addEventListener("change", () => { if (!state.ann.done) { state.ann = { ...state.ann, note: $("note").value }; queueSave(); } });
+$("btn-prev").addEventListener("click", () => neighbour(-1));
+$("btn-next").addEventListener("click", () => neighbour(1));
+$("back").addEventListener("click", () => { if (state.view === "guide") closeGuide(); else loadList(); });
+$("btn-guide").addEventListener("click", openGuide);
+$("guide-done").addEventListener("click", closeGuide);
+$("link-guide").addEventListener("click", (event) => { event.preventDefault(); openGuide(); });
+$("only-open").addEventListener("change", renderList);
+$("continue").addEventListener("click", () => {
+  const next = state.clips.find((c) => c.status !== "concluido");
+  if (next) openClip(next.clip_id); else toast("Todos os clipes estão concluídos — obrigado!", true);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (state.view !== "annot" || event.ctrlKey || event.metaKey || event.altKey) return;
+  const tag = (event.target.tagName || "").toLowerCase();
+  if (tag === "textarea" || tag === "input" || tag === "select") return;
+  const key = event.key;
+  // Segurar Enter (repetição do teclado) não pode concluir o clipe seguinte sem revisão.
+  if (key === "Enter" && (event.repeat || state.opening)) { event.preventDefault(); return; }
+  const handled = () => event.preventDefault();
+  if (key === " ") { handled(); togglePlay(); }
+  else if (key === "ArrowLeft") { handled(); if (event.shiftKey) seek(video.currentTime - 1); else stepFrames(-1); }
+  else if (key === "ArrowRight") { handled(); if (event.shiftKey) seek(video.currentTime + 1); else stepFrames(1); }
+  else if (key === "Enter") { handled(); finishClip(); }
+  else if (key === "Escape") { handled(); clearDraft(); }
+  else if (key === "[") { handled(); changeSpeed(-1); }
+  else if (key === "]") { handled(); changeSpeed(1); }
+  else if (OBSTACLE_KEYS[key]) { handled(); setDraft("obstacle", OBSTACLE_KEYS[key]); }
+  else {
+    const k = key.toLowerCase();
+    const actions = { i: markStart, o: markEnd, a: commitDraft, d: () => setDraft("kind", "desvio"),
+      p: () => setDraft("kind", "parada"), q: () => setDraft("side", "esquerda"), e: () => setDraft("side", "direita") };
+    if (actions[k]) { handled(); actions[k](); }
+  }
+});
+
+window.addEventListener("beforeunload", (event) => {
+  if (save.running || save.pending) { event.preventDefault(); event.returnValue = ""; }
+});
+
+// ── login ──────────────────────────────────────
+$("logout").addEventListener("click", async () => {
+  if ((save.running || save.pending) &&
+      !confirm("Ainda há alterações sendo salvas. Se sair agora, elas podem se perder. Sair mesmo assim?")) return;
+  try { await api("/api/logout", { method: "POST" }); } catch (error) { /* já saiu */ }
+  video.removeAttribute("src");
+  show("login");
+});
+$("signin").addEventListener("click", async () => {
+  try {
+    await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: $("token").value }) });
+    $("token").value = "";
+    await start();
+  } catch (error) { toast(error.message); }
+});
+$("token").addEventListener("keydown", (event) => { if (event.key === "Enter") $("signin").click(); });
+
+async function start() {
+  try {
+    const invite = new URLSearchParams(location.hash.slice(1)).get("token");
+    if (invite) {  // link de convite: /#token=...  (o trecho após # nunca chega ao servidor)
+      history.replaceState(null, "", location.pathname);
+      await api("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: invite }) });
+    }
+    const me = await api("/api/me");
+    $("who").textContent = "Conectado como " + me.annotator;
+    if (!guideSeen()) { state.returnTo = "list"; show("guide"); }
+    else await loadList();
+  } catch (error) { show("login"); }
+}
+start();
+</script>
+</body>
+</html>

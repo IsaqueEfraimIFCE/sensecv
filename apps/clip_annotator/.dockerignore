@@ -1,0 +1,9 @@
+tests
+**/__pycache__
+.pytest_cache
+*.sqlite
+annotators*.json
+requirements-publish.txt
+README.md
+clip_annotator_devdata
+dev_tokens.json

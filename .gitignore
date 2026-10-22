@@ -42,3 +42,10 @@ tmp/
 Thumbs.db
 .idea/
 .vscode/
+
+# Annotator apps: local dev data, indexes and sign-in tokens never go to git
+apps/**/clip_annotator_devdata/
+apps/**/annotators*.json
+apps/**/dev_tokens.json
+apps/**/*.sqlite
+apps/**/.coverage
