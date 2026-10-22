@@ -13,7 +13,8 @@ COPY clip_annotator ./clip_annotator
 
 EXPOSE 8080
 
-# One worker on purpose: the Drive event store keeps a write-through cache in
-# process memory (single-writer design). Threads give the concurrency, and
-# video range requests are many and short.
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads 8 --timeout 120 'clip_annotator.wsgi:create_app_from_env()'"]
+# One worker on purpose: the annotation store is single-writer (per-annotator
+# locks and the Drive write-behind cache live in process memory). Threads give
+# the concurrency: each annotator's browser keeps a few video range requests
+# open, so 32 threads leave room for 10 people at once.
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers 1 --threads ${GUNICORN_THREADS:-32} --timeout 120 'clip_annotator.wsgi:create_app_from_env()'"]

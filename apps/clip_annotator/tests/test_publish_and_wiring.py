@@ -8,7 +8,8 @@ from clip_annotator.dev import make_dev_app
 from clip_annotator.index_db import Clip, IndexDb
 from clip_annotator.make_tokens import main as make_tokens_main
 from clip_annotator.make_tokens import make_tokens
-from clip_annotator.publish import INDEX_NAME, discover_clips, publish_all, upload_index
+from clip_annotator.publish import (INDEX_NAME, build_bundle, discover_clips, publish_all,
+                                    upload_index)
 from clip_annotator.videos import CachedVideoSource, LocalVideoSource
 from clip_annotator.wsgi import build_app, parse_tokens
 from clip_annotator.mp4 import mp4_duration
@@ -184,6 +185,49 @@ def test_build_app_requires_a_published_index(tmp_path, drive):
         build_app(env, drive=drive)
     with pytest.raises(ValueError, match="VIDEOS_DRIVE_FOLDER_ID"):
         build_app({**env, "VIDEOS_DRIVE_FOLDER_ID": ""}, drive=drive)
+
+
+def volume_env(data, token):
+    return {"ANNOTATOR_TOKENS_JSON": json.dumps({token: "ana"}), "ANNOTATOR_STORAGE": "volume",
+            "ANNOTATOR_DATA_DIR": str(data)}
+
+
+def test_bundle_is_resumable_and_self_contained(tmp_path, dataset):
+    assert build_bundle(dataset, tmp_path / "bundle") == 3
+    assert build_bundle(dataset, tmp_path / "bundle") == 0
+    clip = IndexDb(tmp_path / "bundle" / INDEX_NAME).clip("SenseCV-01-01-2026-EXEMPLO__07")
+    assert clip.video_ref == "SenseCV-01-01-2026-EXEMPLO__07.mp4"
+    assert (tmp_path / "bundle" / "videos" / clip.video_ref).read_bytes() == FAKE_MP4
+
+
+def test_volume_app_serves_the_bundle_and_keeps_annotations(tmp_path, dataset):
+    build_bundle(dataset, tmp_path / "data")
+    token = "v" * 40
+    headers = {"X-Annotator-Token": token}
+    client = build_app(volume_env(tmp_path / "data", token)).test_client()
+    clips = client.get("/api/clips", headers=headers).get_json()["clips"]
+    assert len(clips) == 3
+    clip_id = clips[0]["clip_id"]
+    part = client.get(f"/video/{clip_id}", headers={**headers, "Range": "bytes=0-9"})
+    assert part.status_code == 206 and part.data == FAKE_MP4[:10]
+    body = {"events": [{"kind": "parada", "side": None, "obstacle": None,
+                        "start_s": 0.5, "end_s": None}], "done": True}
+    assert client.put(f"/api/clips/{clip_id}/annotation", json=body, headers=headers).status_code == 200
+    restarted = build_app(volume_env(tmp_path / "data", token)).test_client()
+    assert restarted.get("/api/clips", headers=headers).get_json()["clips"][0]["status"] == "concluido"
+    assert (tmp_path / "data" / "annotations" / "ana" / f"{clip_id}.json").is_file()
+
+
+def test_volume_app_boots_before_the_bundle_arrives(tmp_path):
+    token = "v" * 40
+    client = build_app(volume_env(tmp_path / "empty", token)).test_client()
+    assert client.get("/api/clips", headers={"X-Annotator-Token": token}).get_json() == {"clips": []}
+    assert client.get("/api/health").status_code == 200
+
+
+def test_unknown_storage_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match="ANNOTATOR_STORAGE"):
+        build_app({**volume_env(tmp_path, "v" * 40), "ANNOTATOR_STORAGE": "s3"})
 
 
 def test_make_tokens_writes_a_new_file_only(tmp_path, capsys):

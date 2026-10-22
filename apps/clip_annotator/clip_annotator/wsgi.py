@@ -15,7 +15,8 @@ from .app import create_app
 from .drive_store import DriveEventStore
 from .events import is_safe_id
 from .index_db import IndexDb
-from .videos import CachedVideoSource
+from .store import LocalDirStore
+from .videos import CachedVideoSource, LocalVideoSource
 
 MIN_TOKEN_LEN = 32
 INDEX_NAME = "index.sqlite"
@@ -56,8 +57,32 @@ def _ensure_index(drive, videos_folder: str, path: Path, force: bool) -> None:
     os.replace(tmp, path)
 
 
+def _build_volume_app(env: Mapping, tokens: dict):
+    """Everything on the server's data volume: ``index.sqlite``, ``videos/`` (a
+    ``publish --bundle`` copied over) and ``annotations/``. No Google account
+    involved, so nothing expires; durability comes from the volume's snapshots
+    plus the backups described in the README."""
+    data = Path(env.get("ANNOTATOR_DATA_DIR", "/data"))
+    (data / "videos").mkdir(parents=True, exist_ok=True)
+    index = IndexDb(data / INDEX_NAME)
+    index.create()  # no-op when the bundle is there; an empty list until it is
+    return create_app(
+        index=index,
+        store=LocalDirStore(data / "annotations"),
+        tokens=tokens,
+        video_source=LocalVideoSource(data / "videos"),
+        secure_cookies=True,
+        client_ip_header=env.get("CLIENT_IP_HEADER", "Fly-Client-IP"),
+    )
+
+
 def build_app(env: Mapping, drive=None):
     tokens = parse_tokens(env.get("ANNOTATOR_TOKENS_JSON"))
+    storage = env.get("ANNOTATOR_STORAGE", "drive")
+    if storage == "volume":
+        return _build_volume_app(env, tokens)
+    if storage != "drive":
+        raise ValueError("ANNOTATOR_STORAGE must be 'drive' or 'volume'")
     videos_folder = _required(env, "VIDEOS_DRIVE_FOLDER_ID")
     annotations_folder = _required(env, "ANNOTATIONS_DRIVE_FOLDER_ID")
     if drive is None:

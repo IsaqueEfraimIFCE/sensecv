@@ -10,12 +10,15 @@ kill_timeout = 30   # seconds the app gets to flush unsaved annotations on shutd
 
 [env]
   PORT = "8080"
-  ANNOTATOR_INDEX_DB = "/data/index.sqlite"
-  VIDEO_CACHE_DIR = "/data/cache"
-  VIDEO_CACHE_MAX_MB = "1500"
+  # Videos (a `publish --bundle`), index and annotations all live on the volume:
+  # no Google token that expires every 7 days. Set "drive" (plus the Drive
+  # secrets below and VIDEO_CACHE_DIR / ANNOTATOR_INDEX_DB) to use Drive instead.
+  ANNOTATOR_STORAGE = "volume"
+  ANNOTATOR_DATA_DIR = "/data"
 
-# Secrets (never in this file): ANNOTATOR_TOKENS_JSON, VIDEOS_DRIVE_FOLDER_ID,
-# ANNOTATIONS_DRIVE_FOLDER_ID, GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
+# Secrets (never in this file): ANNOTATOR_TOKENS_JSON
+# Drive mode only: VIDEOS_DRIVE_FOLDER_ID, ANNOTATIONS_DRIVE_FOLDER_ID,
+# GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
 
 [mounts]
   source = "clip_annotator_data"

@@ -1,6 +1,7 @@
 """Publish full SenseCV recordings to Drive plus a links-only index.
 
     python -m clip_annotator.publish --dataset <dir> --index index.sqlite
+    python -m clip_annotator.publish --dataset <dir> --bundle <out>   # volume mode, no Drive
 
 A full clip is a recording folder as the phone app writes it: one ``.mp4``,
 ``frames.json`` and ``metadata.json`` (exported cuts carry ``cut_info.json``
@@ -18,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -135,6 +137,27 @@ def build_local_index(root, index: IndexDb) -> int:
     return added
 
 
+def build_bundle(root, out_dir) -> int:
+    """Volume deployment: ``<out>/videos/<clip_id>.mp4`` plus ``<out>/index.sqlite``
+    whose ``video_ref`` is the file name. Copy the folder to the server's data
+    volume as-is. Resumable: clips already in the index are skipped."""
+    out = Path(out_dir)
+    videos = out / "videos"
+    videos.mkdir(parents=True, exist_ok=True)
+    index = IndexDb(out / INDEX_NAME)
+    index.create()
+    known = index.clip_ids()
+    added = 0
+    for source in discover_clips(root):
+        if source.clip_id in known:
+            continue
+        name = f"{source.clip_id}.mp4"
+        shutil.copyfile(source.video, videos / name)
+        index.add_clip(_row(source, name))
+        added += 1
+    return added
+
+
 def publish_clip(source: ClipSource, drive, videos_folder_id: str, index: IndexDb) -> None:
     file_id = drive.upload(f"{source.clip_id}.mp4", source.video.read_bytes(), videos_folder_id,
                            VIDEO_MIME)
@@ -178,8 +201,16 @@ def main(argv=None) -> int:
     parser.add_argument("--limit", type=int, help="publish only the first N clips")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--no-upload-index", action="store_true")
+    parser.add_argument("--bundle", type=Path,
+                        help="build a volume bundle (videos/ + index.sqlite) here instead of using Drive")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+
+    if args.bundle:
+        added = build_bundle(args.dataset, args.bundle)
+        total = len(IndexDb(args.bundle / INDEX_NAME).clips())
+        print(json.dumps({"bundle": str(args.bundle), "added": added, "clips": total}, indent=2))
+        return 0
 
     sources = discover_clips(args.dataset)
     if args.limit:

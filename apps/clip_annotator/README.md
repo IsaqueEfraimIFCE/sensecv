@@ -65,7 +65,48 @@ It indexes the recordings, keeps annotations in `./devdata/annotations`, and
 prints an invite link (`http://127.0.0.1:5100/#token=...`). Add
 `--annotator ana --annotator bruno` for more people.
 
-## Runbook (production)
+## Live deployment (volume mode)
+
+Live at **https://sensecv-clip-annotator.fly.dev/** (Fly app `sensecv-clip-annotator`,
+volume `clip_annotator_data`, 1 machine in `gru`). `ANNOTATOR_STORAGE=volume`:
+videos, index and annotations all sit on the volume (`/data/videos`,
+`/data/index.sqlite`, `/data/annotations/<annotator>/<clip>.json`), so nothing
+depends on a Google token (the Drive token expires every 7 days while the
+OAuth consent screen is in "Testing"). One gunicorn worker, 32 threads (each
+browser keeps a few video range requests open).
+
+Annotator slots `annotator01`..`annotator10`; tokens and invite links live
+outside git in `Desktop/SenseCV_clip_annotator/` (`annotators.json`,
+`invite_links.txt`). Assign people to slots; don't rename slots (the slot name
+is the annotation folder).
+
+**Add or change videos** (resumable; existing clips are kept):
+
+```
+python -m clip_annotator.publish --dataset <recordings root> --bundle <bundle dir>
+tar -cf bundle.tar -C <bundle dir> index.sqlite videos
+MSYS_NO_PATHCONV=1 fly ssh sftp put -a sensecv-clip-annotator bundle.tar /data/bundle.tar
+fly ssh console -a sensecv-clip-annotator -C "sh -c 'tar -xf /data/bundle.tar -C /data && rm /data/bundle.tar'"
+```
+
+The index is read per request, so no restart is needed. (SFTP through Fly's
+tunnel is slow, ~150 KB/s: 335 MB took ~40 min.)
+
+**Back up the annotations** (Fly also snapshots the volume daily, 5 days kept):
+
+```
+fly ssh console -a sensecv-clip-annotator -C "tar -czf /tmp/annotations.tgz -C /data annotations"
+MSYS_NO_PATHCONV=1 fly ssh sftp get -a sensecv-clip-annotator /tmp/annotations.tgz annotations-YYYY-MM-DD.tgz
+```
+
+**Revoke / add annotators:** edit `annotators.json`, then
+`fly secrets import -a sensecv-clip-annotator` with a line
+`ANNOTATOR_TOKENS_JSON=<one-line json>` on stdin (the machine restarts).
+
+Deploy code changes from `apps/clip_annotator/`: `fly deploy --ha=false`
+(flyctl resolves `--config` relative to the build directory, so run it there).
+
+## Runbook (Drive mode)
 
 1. **Publish** (once; resumable; upload only, no heavy processing):
    `GOOGLE_AUTHORIZED_USER_FILE=<token.json> python -m clip_annotator.publish --dataset <recordings root> --index index.sqlite`
@@ -74,8 +115,8 @@ prints an invite link (`http://127.0.0.1:5100/#token=...`). Add
    (never committed). Invite links are `https://<app>/#token=<token>`.
 3. **Secrets**:
    `fly secrets set ANNOTATOR_TOKENS_JSON="$(cat annotators.json)" VIDEOS_DRIVE_FOLDER_ID=... ANNOTATIONS_DRIVE_FOLDER_ID=... GOOGLE_AUTHORIZED_USER_JSON="$(cat token.json)"`
-4. **Deploy**: `fly volumes create clip_annotator_data --size 3 --region gru`, then
-   `fly deploy --config apps/clip_annotator/fly.toml --dockerfile apps/clip_annotator/Dockerfile apps/clip_annotator`.
+4. **Deploy**: set `ANNOTATOR_STORAGE = "drive"` (and `VIDEO_CACHE_DIR`,
+   `ANNOTATOR_INDEX_DB`) in `fly.toml`, then `fly deploy` from `apps/clip_annotator/`.
 
 The Google-credential caveats of the frame annotator apply unchanged (service
 accounts cannot write to a personal Drive; a "Testing" OAuth consent screen
