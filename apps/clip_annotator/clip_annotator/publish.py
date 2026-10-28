@@ -106,7 +106,8 @@ def discover_clips(root) -> list:
         dirs[:] = []
         rel = folder.relative_to(root).parts
         collection = rel[0] if len(rel) > 1 else root.name
-        if collection in EXCLUDED_COLLECTIONS:
+        # "_zips", "_partial": the importer's scratch space, never a collection.
+        if collection in EXCLUDED_COLLECTIONS or (len(rel) > 1 and collection.startswith("_")):
             continue
         try:
             found.append(read_clip(folder, collection))

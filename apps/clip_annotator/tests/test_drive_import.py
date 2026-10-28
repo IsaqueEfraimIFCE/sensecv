@@ -55,6 +55,26 @@ def test_run_import_indexes_with_hard_links_and_resumes(tmp_path):
     assert calls == ["fid1"]
 
 
+def test_a_crash_mid_extraction_never_exposes_half_written_videos(tmp_path, monkeypatch):
+    from clip_annotator import drive_import
+    from clip_annotator.publish import discover_clips
+
+    zip_path = make_collection_zip(tmp_path)
+    real_extract = drive_import.extract_recordings
+
+    def extract_then_die(zip_file, dest):
+        real_extract(zip_file, dest)
+        raise MemoryError("killed while extracting")
+
+    monkeypatch.setattr(drive_import, "extract_recordings", extract_then_die)
+    raw = tmp_path / "data" / "raw"
+    report = run_import([{"id": "f", "name": zip_path.name}], raw, tmp_path / "data",
+                        lambda file_id, path: path.write_bytes(zip_path.read_bytes()))
+    assert report["failed"] and report["indexed"] == 0
+    assert not (raw / "SenseCV-06-06-2026-IFCE").exists()
+    assert discover_clips(raw) == []  # the leftover under _partial is invisible to publish
+
+
 def test_run_import_reports_a_failed_download_and_continues(tmp_path):
     def broken(file_id, path):
         path.write_bytes(b"partial")

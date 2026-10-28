@@ -32,9 +32,11 @@ log = logging.getLogger(__name__)
 
 KEEP_NAMES = {"frames.json", "metadata.json", "cut_info.json"}
 DONE_MARKER = ".complete"
+PARTIAL_DIR = "_partial"  # top-level "_" folders are ignored by publish.discover_clips
 # A zip needs room for itself plus what is extracted from it (~the same size).
 SPACE_FACTOR = 2.2
-CHUNK_BYTES = 64 * 1024 * 1024
+# Small buffers: the server has 512 MB and several downloads run at once.
+CHUNK_BYTES = 8 * 1024 * 1024
 
 
 def _wanted(name: str) -> bool:
@@ -89,10 +91,16 @@ def _import_one(entry, raw: Path, staging: Path, download, report: dict, lock) -
                                                  f"has {free / 1e9:.1f} GB"))
         return
     zip_path = staging / name
+    # Extract next door and rename when complete: a crash (e.g. out of memory)
+    # must never leave half-written videos where publish would pick them up.
+    partial = raw / PARTIAL_DIR / collection
     try:
+        shutil.rmtree(partial, ignore_errors=True)
+        shutil.rmtree(folder, ignore_errors=True)  # an unmarked leftover from an older run
         download(entry["id"], zip_path)
-        files = extract_recordings(zip_path, folder)
-        (folder / DONE_MARKER).write_text(str(files), encoding="utf-8")
+        files = extract_recordings(zip_path, partial)
+        (partial / DONE_MARKER).write_text(str(files), encoding="utf-8")
+        partial.rename(folder)
         with lock:
             report["imported"].append((collection, files))
         print(f"imported {collection}: {files} files", flush=True)
