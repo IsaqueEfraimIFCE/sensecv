@@ -8,8 +8,7 @@ and *what kind* it is, using the vocabulary of the SenseCV viewer's crop form:
   desvio and absent for a parada;
 * ``obstacle``: ``centro`` / ``esquerda`` / ``direita`` / ``nao_visivel`` -
   where the obstacle sits in the path. For a desvio it is always the side
-  opposite the deviation and is filled in automatically; for a parada it is
-  optional;
+  opposite the deviation and is filled in automatically; a parada has none;
 * ``start_s`` (T1, the body starts to react) and ``end_s`` (T2, the trajectory
   is stable again / the person is fully stopped). ``end_s`` is required for a
   desvio and optional for a parada.
@@ -97,6 +96,8 @@ class Event:
             if obstacle not in (None, derived):
                 raise ValueError(f"a desvio to the {side} has the obstacle on the {derived}")
             obstacle = derived
+        else:
+            obstacle = None  # a parada records no obstacle position
         start = _time(raw.get("start_s"), "start_s", limit)
         end = raw.get("end_s")
         if end is None:

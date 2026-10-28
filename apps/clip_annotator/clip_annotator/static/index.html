@@ -77,8 +77,10 @@ kbd{background:var(--panel-2);border:1px solid var(--border);border-bottom-width
 .rchip:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
 .rchip.active{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent);font-weight:600}
 .rchip:disabled{opacity:.35;cursor:default}
-.cond-desvio,.cond-parada{display:none}
-.show-desvio .cond-desvio,.show-parada .cond-parada{display:flex}
+.cond-desvio{display:none}
+.show-desvio .cond-desvio{display:flex}
+.btn.flag{flex:none}
+.btn.flag.active{background:#3a1a1a;border-color:var(--red);color:var(--red)}
 .btn-row{display:flex;gap:6px;margin-top:12px}
 .btn{flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s;background:var(--panel);color:var(--text);font-family:inherit}
 .btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
@@ -193,7 +195,7 @@ tr.row:hover td{background:var(--panel)}
         <button id="btn-fwd1" class="play-btn" type="button" title="Avançar 1 s (Shift+→)">+1 s</button>
         <select id="speed" title="Velocidade ([ e ])" aria-label="Velocidade">
           <option value="0.25">0,25×</option><option value="0.5">0,5×</option>
-          <option value="1" selected>1×</option><option value="1.5">1,5×</option><option value="2">2×</option>
+          <option value="1">1×</option><option value="1.5">1,5×</option><option value="2" selected>2×</option>
         </select>
       </span>
       <span>Posição: <span class="num" id="t-cur">0.000</span> s / <span class="num" id="t-dur">–</span> s
@@ -201,8 +203,8 @@ tr.row:hover td{background:var(--panel)}
     </div>
     <div class="keys">
       <kbd>Espaço</kbd> reproduzir · <kbd>←</kbd><kbd>→</kbd> quadro · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s ·
-      <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>D</kbd> desvio · <kbd>P</kbd> parada · <kbd>Q</kbd>/<kbd>E</kbd> esquerda/direita ·
-      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>0</kbd> obstáculo (parada) · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar ·
+      <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>D</kbd> desvio · <kbd>P</kbd> parada · <kbd>L</kbd> caminhada livre ·
+      <kbd>Q</kbd>/<kbd>E</kbd> esquerda/direita · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar · <kbd>U</kbd> inutilizável ·
       <kbd>[</kbd><kbd>]</kbd> velocidade · <kbd>Enter</kbd> concluir e próximo
     </div>
   </div>
@@ -232,6 +234,7 @@ tr.row:hover td{background:var(--panel)}
         <div class="radio-group" id="rg-kind">
           <button class="rchip" data-val="desvio" type="button">Desvio (D)</button>
           <button class="rchip" data-val="parada" type="button">Parada (P)</button>
+          <button class="rchip" data-val="livre" type="button">Caminhada livre (L)</button>
         </div>
       </div>
       <div class="form-row cond-desvio">
@@ -239,16 +242,6 @@ tr.row:hover td{background:var(--panel)}
         <div class="radio-group" id="rg-side">
           <button class="rchip" data-val="esquerda" type="button">Esquerda (Q)</button>
           <button class="rchip" data-val="direita" type="button">Direita (E)</button>
-        </div>
-        <div class="input-hint" id="derived-obstacle"></div>
-      </div>
-      <div class="form-row cond-parada">
-        <label>Posição do obstáculo no caminho (opcional)</label>
-        <div class="radio-group" id="rg-obstacle">
-          <button class="rchip" data-val="esquerda" type="button">Esquerda (1)</button>
-          <button class="rchip" data-val="centro" type="button">Centro (2)</button>
-          <button class="rchip" data-val="direita" type="button">Direita (3)</button>
-          <button class="rchip" data-val="nao_visivel" type="button">Não visível (0)</button>
         </div>
       </div>
       <div class="btn-row">
@@ -261,24 +254,10 @@ tr.row:hover td{background:var(--panel)}
     <div class="section">
       <h3><span>Eventos do clipe (<span id="ev-count">0</span>)</span><span class="save-state" id="save-state"></span></h3>
       <div id="ev-list"></div>
-    </div>
-
-    <div class="section">
-      <h3>Conclusão do clipe</h3>
-      <div class="form-row" style="margin-top:0">
-        <label>Se não houver nenhum evento, diga por quê</label>
-        <div class="radio-group" id="rg-verdict">
-          <button class="rchip" data-val="sem_evento" type="button">Sem evento (caminhada livre)</button>
-          <button class="rchip" data-val="inutilizavel" type="button">Inutilizável</button>
-        </div>
-      </div>
-      <div class="form-row">
-        <label for="note">Observação (opcional)</label>
-        <textarea id="note" maxlength="500" placeholder="Algo estranho neste clipe?"></textarea>
-      </div>
       <div class="btn-row">
         <button class="btn primary" id="btn-done" type="button">✓ Concluir e ir ao próximo (Enter)</button>
         <button class="btn hidden" id="btn-reopen" type="button">Reabrir clipe</button>
+        <button class="btn flag" id="btn-unusable" type="button" title="Vídeo preto, corrompido ou impossível de julgar">Inutilizável (U)</button>
       </div>
       <div class="input-hint" id="done-hint"></div>
     </div>
@@ -295,18 +274,19 @@ tr.row:hover td{background:var(--panel)}
 
     <h3>Passo a passo</h3>
     <ol>
-      <li>Assista ao clipe inteiro uma vez em 1× para entender o que acontece.</li>
+      <li>O clipe começa a tocar sozinho em 2×. Assista inteiro uma vez para entender o que acontece.</li>
       <li>Volte ao começo do evento e use <kbd>←</kbd> <kbd>→</kbd> (quadro a quadro) ou a velocidade 0,25× para achar o momento exato.</li>
       <li>Marque o <strong>início</strong> (<kbd>I</kbd>) e o <strong>fim</strong> (<kbd>O</kbd>), escolha o tipo e clique em <strong>Adicionar evento</strong> (<kbd>A</kbd>).</li>
       <li>Repita para cada evento do clipe. Um clipe pode ter mais de um evento; eles não podem se sobrepor.</li>
-      <li>Clique em <strong>Concluir e ir ao próximo</strong> (<kbd>Enter</kbd>). Sem nenhum evento, escolha antes <em>Sem evento</em> ou <em>Inutilizável</em>.</li>
+      <li>Clique em <strong>Concluir e ir ao próximo</strong> (<kbd>Enter</kbd>). Sem nenhum evento, escolha antes <em>Caminhada livre</em> ou marque <em>Inutilizável</em>.</li>
     </ol>
 
-    <h3>Tipos de evento</h3>
+    <h3>Tipos</h3>
     <ul>
       <li><strong>Desvio</strong>: a pessoa sai lateralmente da trajetória para contornar um obstáculo.
         A <strong>direção</strong> é o lado para onde a pessoa vai (não o lado do obstáculo): se ela contorna pela esquerda, é <em>esquerda</em>.</li>
       <li><strong>Parada</strong>: a pessoa diminui e para diante de um obstáculo, sem contorná-lo.</li>
+      <li><strong>Caminhada livre</strong>: o clipe inteiro sem desvio e sem parada. Não precisa de início nem fim.</li>
     </ul>
 
     <h3>Os dois momentos</h3>
@@ -320,17 +300,9 @@ tr.row:hover td{background:var(--panel)}
       </tbody>
     </table>
 
-    <h3>Posição do obstáculo</h3>
-    <p>No <strong>desvio</strong> o obstáculo fica sempre do lado oposto ao desvio: desvio à esquerda = obstáculo à direita,
-      desvio à direita = obstáculo à esquerda. O app preenche isso sozinho; você só escolhe a direção.</p>
-    <p>Na <strong>parada</strong>, indique onde o obstáculo está no caminho no momento do início: esquerda, centro ou
-      direita. Use <em>Não visível</em> se não der para ver o obstáculo. Este campo é opcional.</p>
-
-    <h3>Clipes sem evento</h3>
-    <ul>
-      <li><strong>Sem evento</strong>: caminhada livre, sem desvio e sem parada.</li>
-      <li><strong>Inutilizável</strong>: vídeo preto, corrompido, câmera apontando para o chão o tempo todo, ou impossível de julgar.</li>
-    </ul>
+    <h3>Inutilizável</h3>
+    <p>Marque <strong>Inutilizável</strong> (<kbd>U</kbd>) quando o vídeo estiver preto, corrompido, com a câmera apontando
+      para o chão o tempo todo, ou impossível de julgar.</p>
     <p class="muted">Desconsidere o começo e o fim da gravação, quando a pessoa está ligando ou desligando a câmera.</p>
 
     <h3>Atalhos</h3>
@@ -339,9 +311,9 @@ tr.row:hover td{background:var(--panel)}
         <tr><td><kbd>Espaço</kbd></td><td>reproduzir / pausar</td><td><kbd>I</kbd> / <kbd>O</kbd></td><td>marcar início / fim</td></tr>
         <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>um quadro</td><td><kbd>D</kbd> / <kbd>P</kbd></td><td>desvio / parada</td></tr>
         <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>um segundo</td><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>esquerda / direita</td></tr>
-        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd></td><td>obstáculo da parada: esquerda / centro / direita / não visível</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>L</kbd></td><td>caminhada livre</td></tr>
         <tr><td><kbd>A</kbd></td><td>adicionar / salvar evento</td><td><kbd>Esc</kbd></td><td>limpar marcas / cancelar edição</td></tr>
-        <tr><td><kbd>Enter</kbd></td><td>concluir e ir ao próximo</td><td></td><td></td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>concluir e ir ao próximo</td><td><kbd>U</kbd></td><td>inutilizável</td></tr>
       </tbody>
     </table>
     <div class="btn-row" style="max-width:320px"><button class="btn primary" id="guide-done" type="button">Entendi, começar</button></div>
@@ -353,16 +325,16 @@ tr.row:hover td{background:var(--panel)}
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const GUIDE_KEY = "guia_clipes_visto_v1";
+const GUIDE_KEY = "guia_clipes_visto_v2";
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
+const DEFAULT_SPEED = 2;  // todo clipe começa a tocar sozinho nesta velocidade
 const ZOOM_HALF_S = 3;
 const KIND_NAMES = { desvio: "Desvio", parada: "Parada" };
 const SIDE_NAMES = { esquerda: "esquerda", direita: "direita" };
-const OBSTACLE_NAMES = { esquerda: "obstáculo à esquerda", centro: "obstáculo no centro",
-  direita: "obstáculo à direita", nao_visivel: "obstáculo não visível" };
 const STATUS_NAMES = { pendente: "Pendente", andamento: "Em andamento", concluido: "Concluído" };
-const VERDICT_NAMES = { sem_evento: "Sem evento", inutilizavel: "Inutilizável" };
-const OBSTACLE_KEYS = { "1": "esquerda", "2": "centro", "3": "direita", "0": "nao_visivel" };
+const VERDICT_NAMES = { sem_evento: "Caminhada livre", inutilizavel: "Inutilizável" };
+const FREE_WALK = "sem_evento";
+const UNUSABLE = "inutilizavel";
 // Protocolo de coleta: desvio à esquerda => obstáculo à direita, e vice-versa.
 const OPPOSITE_SIDE = { esquerda: "direita", direita: "esquerda" };
 const COLORS = { esquerda: "#86c5ff", direita: "#c79bff", parada: "#ff6b61" };
@@ -508,9 +480,10 @@ async function loadClip(clipId) {
   $("btn-prev").disabled = idx <= 0;
   $("btn-next").disabled = idx < 0 || idx >= state.clips.length - 1;
   $("video-msg").classList.add("hidden");
+  $("speed").value = String(DEFAULT_SPEED);
+  state.autoplay = true;  // começa a tocar assim que os metadados chegarem
   video.src = clip.video_url;
-  video.playbackRate = Number($("speed").value);
-  $("note").value = state.ann.note || "";
+  video.playbackRate = DEFAULT_SPEED;
   setSaveState("");
   show("annot");
   renderAll();
@@ -521,7 +494,15 @@ function setVideoMessage(text) {
   $("video-msg").classList.toggle("hidden", !text);
 }
 
-video.addEventListener("loadedmetadata", () => { video.playbackRate = Number($("speed").value); renderTime(); drawTimelines(); });
+video.addEventListener("loadedmetadata", () => {
+  video.playbackRate = Number($("speed").value);
+  renderTime();
+  drawTimelines();
+  if (state.autoplay) {  // o vídeo é mudo, então o navegador permite tocar sem clique
+    state.autoplay = false;
+    video.play().catch(() => {});
+  }
+});
 video.addEventListener("error", () => { if (video.getAttribute("src")) setVideoMessage("Não foi possível carregar o vídeo. Recarregue a página."); });
 video.addEventListener("waiting", () => setVideoMessage("Carregando…"));
 video.addEventListener("canplay", () => setVideoMessage(""));
@@ -686,13 +667,12 @@ function renderDraft() {
   $("go-start").disabled = d.start_s == null;
   $("go-end").disabled = d.end_s == null;
   $("clear-end").disabled = d.end_s == null;
-  setChips("rg-kind", d.kind);
+  const freeWalk = state.ann.verdict === FREE_WALK;
+  setChips("rg-kind", freeWalk ? "livre" : d.kind);
+  const livre = $("rg-kind").querySelector('[data-val="livre"]');
+  livre.disabled = state.ann.done || state.ann.events.length > 0 || state.ann.verdict === UNUSABLE;
   setChips("rg-side", d.side);
-  setChips("rg-obstacle", d.obstacle);
   $("draft-section").classList.toggle("show-desvio", d.kind === "desvio");
-  $("draft-section").classList.toggle("show-parada", d.kind === "parada");
-  $("derived-obstacle").textContent = d.side
-    ? `Obstáculo: à ${OPPOSITE_SIDE[d.side]} (automático: sempre do lado oposto ao desvio)` : "";
   const editing = state.editing != null;
   $("draft-title").textContent = editing ? `Editando evento ${state.editing + 1}` : "Marcar evento";
   $("btn-add").textContent = editing ? "✓ Salvar alterações (A)" : "＋ Adicionar evento (A)";
@@ -701,6 +681,7 @@ function renderDraft() {
   const untouched = !editing && d.start_s == null && d.end_s == null && !d.kind;
   $("btn-add").disabled = !!problem || state.ann.done;
   $("draft-hint").textContent = state.ann.done ? "Clipe concluído. Reabra-o para editar."
+    : freeWalk && untouched ? "Caminhada livre: conclua o clipe (Enter)."
     : untouched ? "Marque o início e o fim, escolha o tipo e adicione." : problem || "Pronto para adicionar.";
   $("draft-hint").classList.toggle("err", !!problem && !untouched && !state.ann.done);
 }
@@ -728,8 +709,7 @@ function renderEvents() {
     const when = document.createElement("div");
     when.className = "when";
     const length = e.end_s == null ? "sem fim" : `${(e.end_s - e.start_s).toFixed(2)} s`;
-    when.textContent = `${fmt(e.start_s)} → ${e.end_s == null ? "–" : fmt(e.end_s)} s (${length})` +
-      (e.obstacle ? ` · ${OBSTACLE_NAMES[e.obstacle]}` : "");
+    when.textContent = `${fmt(e.start_s)} → ${e.end_s == null ? "–" : fmt(e.end_s)} s (${length})`;
     body.append(what, when);
     const acts = document.createElement("div");
     acts.className = "acts";
@@ -752,16 +732,18 @@ function renderEvents() {
 
 function renderConclusion() {
   const hasEvents = state.ann.events.length > 0;
-  setChips("rg-verdict", hasEvents ? null : state.ann.verdict, hasEvents || state.ann.done);
-  $("note").disabled = state.ann.done;
+  const unusable = state.ann.verdict === UNUSABLE;
+  $("btn-unusable").classList.toggle("active", unusable);
+  $("btn-unusable").textContent = unusable ? "✕ Inutilizável (U)" : "Inutilizável (U)";
+  $("btn-unusable").disabled = state.ann.done || hasEvents;
   $("btn-done").classList.toggle("hidden", state.ann.done);
   $("btn-reopen").classList.toggle("hidden", !state.ann.done);
-  const ready = hasEvents || !!state.ann.verdict;
-  $("btn-done").disabled = !ready;
+  $("btn-done").disabled = !(hasEvents || !!state.ann.verdict);
   $("done-hint").classList.remove("err");
-  $("done-hint").textContent = state.ann.done ? "Clipe concluído ✓" : hasEvents
-    ? "Quando todos os eventos estiverem marcados, conclua o clipe."
-    : "Sem eventos: escolha “Sem evento” ou “Inutilizável” para concluir.";
+  $("done-hint").textContent = state.ann.done ? "Clipe concluído ✓"
+    : unusable ? "Marcado como inutilizável."
+    : hasEvents || state.ann.verdict ? ""
+    : "Sem eventos: escolha “Caminhada livre” ou marque “Inutilizável”.";
 }
 
 function renderAll() { renderDraft(); renderEvents(); renderConclusion(); renderTime(); drawTimelines(); }
@@ -779,13 +761,13 @@ function markStart() { if (state.ann.done) return; state.draft.start_s = round3(
 function markEnd() { if (state.ann.done) return; state.draft.end_s = round3(video.currentTime); renderDraft(); drawTimelines(); }
 function setDraft(field, value) {
   if (state.ann.done) return;
+  if (field === "kind" && value === "livre") { setVerdict(FREE_WALK); return; }
   const d = state.draft;
-  if (field === "obstacle" && d.kind !== "parada") return;  // num desvio o obstáculo é automático
-  d[field] = d[field] === value && field === "obstacle" ? null : value;
+  d[field] = value;
   if (field === "side") d.kind = "desvio";
-  // O obstáculo de um desvio fica sempre do lado oposto; ao trocar de tipo, recomeça vazio.
-  if (field === "kind" && value === "parada") { d.side = null; d.obstacle = null; }
-  if (d.kind === "desvio") d.obstacle = d.side ? OPPOSITE_SIDE[d.side] : null;
+  if (field === "kind" && value === "parada") d.side = null;
+  // Desvio: o obstáculo fica sempre do lado oposto. Parada: sem obstáculo.
+  d.obstacle = d.kind === "desvio" && d.side ? OPPOSITE_SIDE[d.side] : null;
   renderDraft();
 }
 
@@ -806,7 +788,7 @@ function commitDraft() {
   const d = state.draft;
   const isDesvio = d.kind === "desvio";
   const event = { kind: d.kind, side: isDesvio ? d.side : null,
-                  obstacle: isDesvio ? OPPOSITE_SIDE[d.side] : d.obstacle,
+                  obstacle: isDesvio ? OPPOSITE_SIDE[d.side] : null,
                   start_s: d.start_s, end_s: d.end_s };
   const events = state.ann.events.slice();
   if (state.editing != null) events[state.editing] = event; else events.push(event);
@@ -829,10 +811,13 @@ function deleteEvent(i) {
   queueSave();
 }
 
+/** Caminhada livre e Inutilizável valem para o clipe inteiro (sem eventos). */
 function setVerdict(value) {
   if (state.ann.done || state.ann.events.length) return;
   state.ann = { ...state.ann, verdict: state.ann.verdict === value ? null : value };
-  renderConclusion();
+  state.draft = emptyDraft();
+  state.editing = null;
+  renderAll();
   queueSave();
 }
 
@@ -846,7 +831,7 @@ async function finishClip() {
     state.draft = emptyDraft();
     state.editing = null;
   }
-  state.ann = { ...state.ann, done: true, note: $("note").value };
+  state.ann = { ...state.ann, done: true };
   renderAll();
   queueSave();
   if (!(await waitSaved())) return;
@@ -882,7 +867,7 @@ function queueSave() {
     clipId: state.clip.clip_id,
     body: { events: state.ann.events.map(({ kind, side, obstacle, start_s, end_s }) =>
       ({ kind, side, obstacle, start_s, end_s })), verdict: state.ann.verdict,
-      done: state.ann.done, note: $("note").value },
+      done: state.ann.done, note: state.ann.note || "" },
   };
   if (!save.running) runSave();
 }
@@ -942,7 +927,6 @@ async function resync(clipId) {
   try {
     const clip = await api("/api/clips/" + encodeURIComponent(clipId));
     state.ann = { ...clip.annotation, events: clip.annotation.events.map((e) => ({ ...e })) };
-    $("note").value = state.ann.note || "";
     renderAll();
   } catch (error) { /* o aviso já foi mostrado */ }
 }
@@ -959,14 +943,13 @@ $("btn-end").addEventListener("click", markEnd);
 $("go-start").addEventListener("click", () => { video.pause(); seek(state.draft.start_s); });
 $("go-end").addEventListener("click", () => { video.pause(); seek(state.draft.end_s); });
 $("clear-end").addEventListener("click", () => { state.draft.end_s = null; renderDraft(); drawTimelines(); });
-for (const [group, field] of [["rg-kind", "kind"], ["rg-side", "side"], ["rg-obstacle", "obstacle"]])
+for (const [group, field] of [["rg-kind", "kind"], ["rg-side", "side"]])
   for (const btn of $(group).querySelectorAll(".rchip")) btn.addEventListener("click", () => setDraft(field, btn.dataset.val));
-for (const btn of $("rg-verdict").querySelectorAll(".rchip")) btn.addEventListener("click", () => setVerdict(btn.dataset.val));
 $("btn-add").addEventListener("click", commitDraft);
 $("btn-cancel").addEventListener("click", clearDraft);
 $("btn-done").addEventListener("click", finishClip);
 $("btn-reopen").addEventListener("click", reopenClip);
-$("note").addEventListener("change", () => { if (!state.ann.done) { state.ann = { ...state.ann, note: $("note").value }; queueSave(); } });
+$("btn-unusable").addEventListener("click", () => setVerdict(UNUSABLE));
 $("btn-prev").addEventListener("click", () => neighbour(-1));
 $("btn-next").addEventListener("click", () => neighbour(1));
 $("back").addEventListener("click", () => { if (state.view === "guide") closeGuide(); else loadList(); });
@@ -994,11 +977,11 @@ document.addEventListener("keydown", (event) => {
   else if (key === "Escape") { handled(); clearDraft(); }
   else if (key === "[") { handled(); changeSpeed(-1); }
   else if (key === "]") { handled(); changeSpeed(1); }
-  else if (OBSTACLE_KEYS[key]) { handled(); setDraft("obstacle", OBSTACLE_KEYS[key]); }
   else {
     const k = key.toLowerCase();
     const actions = { i: markStart, o: markEnd, a: commitDraft, d: () => setDraft("kind", "desvio"),
-      p: () => setDraft("kind", "parada"), q: () => setDraft("side", "esquerda"), e: () => setDraft("side", "direita") };
+      p: () => setDraft("kind", "parada"), q: () => setDraft("side", "esquerda"), e: () => setDraft("side", "direita"),
+      l: () => setVerdict(FREE_WALK), u: () => setVerdict(UNUSABLE) };
     if (actions[k]) { handled(); actions[k](); }
   }
 });

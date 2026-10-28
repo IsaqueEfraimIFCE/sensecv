@@ -47,8 +47,8 @@ def test_desvio_rejects_an_obstacle_on_its_own_side(empty, side, obstacle):
         empty.replace_with({"events": [desvio(side=side, obstacle=obstacle)]})
 
 
-def test_parada_keeps_its_optional_obstacle(empty):
-    assert empty.replace_with({"events": [parada(obstacle="centro")]}).events[0].obstacle == "centro"
+def test_parada_never_records_an_obstacle(empty):
+    assert empty.replace_with({"events": [parada(obstacle="centro")]}).events[0].obstacle is None
     assert empty.replace_with({"events": [parada()]}).events[0].obstacle is None
 
 
