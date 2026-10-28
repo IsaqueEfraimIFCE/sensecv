@@ -65,63 +65,65 @@ It indexes the recordings, keeps annotations in `./devdata/annotations`, and
 prints an invite link (`http://127.0.0.1:5100/#token=...`). Add
 `--annotator ana --annotator bruno` for more people.
 
-## Live deployment (volume mode)
+## Live deployment (Drive mode, no volume)
 
 Live at **https://sensecv-clip-annotator.fly.dev/** (Fly app `sensecv-clip-annotator`,
-volume `clip_annotator_data`, 1 machine in `gru`). `ANNOTATOR_STORAGE=volume`:
-videos, index and annotations all sit on the volume (`/data/videos`,
-`/data/index.sqlite`, `/data/annotations/<annotator>/<clip>.json`), so nothing
-depends on a Google token (the Drive token expires every 7 days while the
-OAuth consent screen is in "Testing"). One gunicorn worker, 32 threads (each
-browser keeps a few video range requests open).
+1 machine in `gru`, 512 MB, **no volume**; it stops when idle and wakes on the
+first request). Everything lives on Google Drive, like the frame annotator:
+
+| What | Drive |
+|---|---|
+| Videos | `SenseCV clip annotator/videos/<clip_id>.mp4` (folder `1wZuWm2uYqxhJsB5E9qdtXEyLIJXUbSJ5`): 1045 recordings, 23 collections of `Dataset - SenseCV`, 16.35 GB |
+| Index | `index.sqlite` in the videos folder, downloaded at every start |
+| Annotations | `SenseCV clip annotator/annotations/<annotator>/<clip>.json` + `_progress.json` (folder `1ee_CThXlaN5WFymQq7elkjMUJxmeeHwb`) |
+
+The machine keeps only temporary files (`/tmp/clip_annotator`: the index and a
+1 GB video cache), rebuilt from Drive after each start. The first open of a clip
+after a start fetches it from Drive (measured: ~1.5 s extra for a typical clip;
+the 216 s recording takes a few seconds more); later opens come from the cache.
+Saves reach Drive about 1 s later (write-behind); on a normal stop the server
+flushes them first (`kill_signal`/`kill_timeout`).
 
 Annotator slots `annotator01`..`annotator10`; tokens and invite links live
 outside git in `Desktop/SenseCV_clip_annotator/` (`annotators.json`,
 `invite_links.txt`). Assign people to slots; don't rename slots (the slot name
 is the annotation folder).
 
-**Add or change videos** (resumable; existing clips are kept):
+**Keep the Drive token alive.** `GOOGLE_AUTHORIZED_USER_JSON` is the full-Drive
+token from `colab-hello-world/token_drive.json`. While the OAuth consent screen
+of project `gdrive-505701` is in "Testing", Google revokes it after 7 days and
+the app stops working (health 503 / sign-in errors). Publish the consent screen
+("In production"), consent again, and set the secret from the new file.
 
-```
-python -m clip_annotator.publish --dataset <recordings root> --bundle <bundle dir>
-tar -cf bundle.tar -C <bundle dir> index.sqlite videos
-MSYS_NO_PATHCONV=1 fly ssh sftp put -a sensecv-clip-annotator bundle.tar /data/bundle.tar
-fly ssh console -a sensecv-clip-annotator -C "sh -c 'tar -xf /data/bundle.tar -C /data && rm /data/bundle.tar'"
-```
+**Add collections** (runs on the server, which downloads from and uploads to
+Drive; only ~1 h access tokens leave the laptop): write `zips.json`
+(`[{"id","name","size"}]` of the new `SenseCV-*.zip` files) and an
+`access_token.json`, copy both to the machine, then run
+`python -m clip_annotator.drive_import ...` followed by
+`GOOGLE_ACCESS_TOKEN_FILE=... python -m clip_annotator.publish --dataset <raw> --index <drive index copy>`.
+Both are resumable; a long run picks up a replaced `access_token.json` without a
+restart. Give the machine scratch space (a temporary volume) and ~2 GB of memory
+for the import, then remove them again. Restart the app afterwards so it
+downloads the new index.
 
-The index is read per request, so no restart is needed. (SFTP through Fly's
-tunnel is slow, ~150 KB/s: 335 MB took ~40 min.)
-
-**Back up the annotations** (Fly also snapshots the volume daily, 5 days kept):
-
-```
-fly ssh console -a sensecv-clip-annotator -C "tar -czf /tmp/annotations.tgz -C /data annotations"
-MSYS_NO_PATHCONV=1 fly ssh sftp get -a sensecv-clip-annotator /tmp/annotations.tgz annotations-YYYY-MM-DD.tgz
-```
+**Back up the annotations:** they are plain JSON files on Drive; download the
+`annotations` folder.
 
 **Revoke / add annotators:** edit `annotators.json`, then
 `fly secrets import -a sensecv-clip-annotator` with a line
 `ANNOTATOR_TOKENS_JSON=<one-line json>` on stdin (the machine restarts).
+After restoring or deleting annotation files on Drive, restart the machine: the
+server caches annotations in memory.
 
 Deploy code changes from `apps/clip_annotator/`: `fly deploy --ha=false`
 (flyctl resolves `--config` relative to the build directory, so run it there).
 
-## Runbook (Drive mode)
-
-1. **Publish** (once; resumable; upload only, no heavy processing):
-   `GOOGLE_AUTHORIZED_USER_FILE=<token.json> python -m clip_annotator.publish --dataset <recordings root> --index index.sqlite`
-   Prints `VIDEOS_DRIVE_FOLDER_ID` and `ANNOTATIONS_DRIVE_FOLDER_ID`.
-2. **Tokens**: `python -m clip_annotator.make_tokens ana bruno ... --out annotators.json`
-   (never committed). Invite links are `https://<app>/#token=<token>`.
-3. **Secrets**:
-   `fly secrets set ANNOTATOR_TOKENS_JSON="$(cat annotators.json)" VIDEOS_DRIVE_FOLDER_ID=... ANNOTATIONS_DRIVE_FOLDER_ID=... GOOGLE_AUTHORIZED_USER_JSON="$(cat token.json)"`
-4. **Deploy**: set `ANNOTATOR_STORAGE = "drive"` (and `VIDEO_CACHE_DIR`,
-   `ANNOTATOR_INDEX_DB`) in `fly.toml`, then `fly deploy` from `apps/clip_annotator/`.
+Volume mode (`ANNOTATOR_STORAGE=volume` plus a `[mounts]` section, videos from
+`publish --bundle`) still works for a deployment without any Google account.
 
 The Google-credential caveats of the frame annotator apply unchanged (service
 accounts cannot write to a personal Drive; a "Testing" OAuth consent screen
-expires refresh tokens after 7 days). After restoring or deleting annotation
-files on Drive, restart the machine: the server caches annotations in memory.
+expires refresh tokens after 7 days).
 
 `drive.py` and `make_tokens.py` are copies of the frame annotator's, so each app
 stays a self-contained deploy unit (its own Docker build context).
