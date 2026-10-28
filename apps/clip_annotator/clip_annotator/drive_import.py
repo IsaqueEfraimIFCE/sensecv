@@ -21,7 +21,9 @@ import json
 import logging
 import shutil
 import sys
+import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 
 from .publish import build_bundle
@@ -71,49 +73,67 @@ def extract_recordings(zip_path, dest) -> int:
     return written
 
 
-def run_import(zips, raw_dir, data_dir, download) -> dict:
-    """``download(file_id, path)`` fetches one Drive file to ``path``."""
+def _import_one(entry, raw: Path, staging: Path, download, report: dict, lock) -> None:
+    name = entry["name"]
+    collection = name[:-4] if name.lower().endswith(".zip") else name
+    folder = raw / collection
+    if (folder / DONE_MARKER).exists():
+        with lock:
+            report["skipped"].append(collection)
+        return
+    size = int(entry.get("size", 0))
+    free = shutil.disk_usage(raw).free
+    if size and free < size * SPACE_FACTOR:
+        with lock:
+            report["failed"].append((collection, f"needs ~{size * SPACE_FACTOR / 1e9:.1f} GB free, "
+                                                 f"has {free / 1e9:.1f} GB"))
+        return
+    zip_path = staging / name
+    try:
+        download(entry["id"], zip_path)
+        files = extract_recordings(zip_path, folder)
+        (folder / DONE_MARKER).write_text(str(files), encoding="utf-8")
+        with lock:
+            report["imported"].append((collection, files))
+        print(f"imported {collection}: {files} files", flush=True)
+    except Exception as error:  # noqa: BLE001 - one bad zip must not stop the run
+        log.exception("collection %s failed", collection)
+        with lock:
+            report["failed"].append((collection, f"{type(error).__name__}: {error}"))
+    finally:
+        zip_path.unlink(missing_ok=True)
+
+
+def run_import(zips, raw_dir, data_dir, download, *, workers: int = 1) -> dict:
+    """``download(file_id, path)`` fetches one Drive file to ``path``; ``workers``
+    collections are downloaded and extracted at a time."""
     raw = Path(raw_dir)
     staging = raw / "_zips"
     staging.mkdir(parents=True, exist_ok=True)
     report = {"imported": [], "skipped": [], "failed": []}
-    for entry in zips:
-        name = entry["name"]
-        collection = name[:-4] if name.lower().endswith(".zip") else name
-        folder = raw / collection
-        if (folder / DONE_MARKER).exists():
-            report["skipped"].append(collection)
-            continue
-        size = int(entry.get("size", 0))
-        free = shutil.disk_usage(raw).free
-        if size and free < size * SPACE_FACTOR:
-            report["failed"].append((collection, f"needs ~{size * SPACE_FACTOR / 1e9:.1f} GB free, "
-                                                 f"has {free / 1e9:.1f} GB"))
-            continue
-        zip_path = staging / name
-        try:
-            download(entry["id"], zip_path)
-            files = extract_recordings(zip_path, folder)
-            (folder / DONE_MARKER).write_text(str(files), encoding="utf-8")
-            report["imported"].append((collection, files))
-            print(f"imported {collection}: {files} files", flush=True)
-        except Exception as error:  # noqa: BLE001 - one bad zip must not stop the run
-            log.exception("collection %s failed", collection)
-            report["failed"].append((collection, f"{type(error).__name__}: {error}"))
-        finally:
-            zip_path.unlink(missing_ok=True)
+    lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        list(pool.map(lambda entry: _import_one(entry, raw, staging, download, report, lock), zips))
     report["indexed"] = build_bundle(raw, data_dir, link=True)
     return report
 
 
-def drive_downloader(access_token: str):
-    from google.oauth2.credentials import Credentials
+def drive_downloader(token_file):
+    """Downloader whose credentials re-read ``token_file`` when the token nears
+    expiry, so a long run survives the laptop swapping in fresh 1 h tokens."""
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseDownload
 
-    service = build("drive", "v3", credentials=Credentials(token=access_token), cache_discovery=False)
+    from .drive import file_token_credentials
+
+    credentials = file_token_credentials(token_file)
+    local = threading.local()  # httplib2 is not thread-safe: one service per thread
 
     def download(file_id: str, path: Path) -> None:
+        service = getattr(local, "service", None)
+        if service is None:
+            service = local.service = build("drive", "v3", credentials=credentials,
+                                            cache_discovery=False)
         request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
         with open(path, "wb") as handle:
             downloader = MediaIoBaseDownload(handle, request, chunksize=CHUNK_BYTES)
@@ -130,11 +150,11 @@ def main(argv=None) -> int:
     parser.add_argument("--token-file", required=True, type=Path)
     parser.add_argument("--raw", type=Path, default=Path("/data/raw"))
     parser.add_argument("--data", type=Path, default=Path("/data"))
+    parser.add_argument("--workers", type=int, default=3)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    token = json.loads(args.token_file.read_text(encoding="utf-8"))["access_token"]
     report = run_import(json.loads(args.zips.read_text(encoding="utf-8")), args.raw, args.data,
-                        drive_downloader(token))
+                        drive_downloader(args.token_file), workers=args.workers)
     print(json.dumps(report, indent=1), flush=True)
     return 1 if report["failed"] else 0
 

@@ -17,6 +17,20 @@ def test_access_token_file_gives_bearer_only_credentials(tmp_path):
     assert creds.refresh_token is None  # nothing long-lived on the remote machine
 
 
+def test_access_token_file_is_reread_when_the_token_expires(tmp_path):
+    from datetime import datetime, timedelta
+
+    path = tmp_path / "access_token.json"
+    soon = datetime.utcnow() + timedelta(seconds=30)  # inside google-auth's refresh margin
+    path.write_text(json.dumps({"access_token": "old", "expiry": soon.isoformat() + "Z"}), encoding="utf-8")
+    creds = credentials_from_env({"GOOGLE_ACCESS_TOKEN_FILE": str(path)})
+    assert not creds.valid
+    later = datetime.utcnow() + timedelta(hours=1)
+    path.write_text(json.dumps({"access_token": "fresh", "expiry": later.isoformat() + "Z"}), encoding="utf-8")
+    creds.refresh(None)  # the laptop swapped in a new token: picked up without a restart
+    assert creds.token == "fresh" and creds.valid
+
+
 def test_missing_credentials_names_every_option():
     with pytest.raises(RuntimeError, match="GOOGLE_ACCESS_TOKEN_FILE"):
         credentials_from_env({})

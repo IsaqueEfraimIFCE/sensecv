@@ -17,6 +17,7 @@ import random
 import ssl
 import threading
 import time
+from datetime import datetime
 from typing import Mapping, Optional
 
 import httplib2
@@ -60,14 +61,34 @@ def credentials_from_env(env: Mapping):
         return Credentials.from_authorized_user_file(path)
     path = env.get("GOOGLE_ACCESS_TOKEN_FILE")
     if path:
-        # A bare ~1 h bearer token ({"access_token": ...}): for one-off jobs on a
-        # remote machine, so the long-lived refresh token never leaves the laptop.
-        with open(path, encoding="utf-8") as handle:
-            return Credentials(token=json.load(handle)["access_token"])
+        return file_token_credentials(path)
     raise RuntimeError(
         "no Google credentials: set GOOGLE_AUTHORIZED_USER_JSON, GOOGLE_AUTHORIZED_USER_FILE, "
         "GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_ACCESS_TOKEN_FILE"
     )
+
+
+def _read_token_file(path):
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    expiry = data.get("expiry")
+    if expiry:  # google-auth compares against naive UTC datetimes
+        expiry = datetime.fromisoformat(expiry.rstrip("Z")).replace(tzinfo=None)
+    return data["access_token"], expiry
+
+
+def file_token_credentials(path):
+    """Credentials from a bare ~1 h bearer token file (``{"access_token", "expiry"}``).
+
+    For long one-off jobs on a remote machine: the long-lived refresh token
+    never leaves the laptop, which instead replaces the file with a fresh token
+    before the old one expires. google-auth calls the refresh handler when the
+    token is (nearly) expired, and it simply re-reads the file."""
+    from google.oauth2.credentials import Credentials
+
+    token, expiry = _read_token_file(path)
+    return Credentials(token=token, expiry=expiry,
+                       refresh_handler=lambda request, scopes: _read_token_file(path))
 
 
 def _escape(value: str) -> str:
