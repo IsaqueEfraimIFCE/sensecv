@@ -1,5 +1,5 @@
-# Deploy from the repo root:
-#   fly deploy --config apps/clip_annotator/fly.toml --dockerfile apps/clip_annotator/Dockerfile apps/clip_annotator
+# Deploy from this folder (flyctl resolves --config relative to the build dir):
+#   cd apps/clip_annotator && fly deploy --ha=false
 # (rename `app` if the name is taken)
 app = "sensecv-clip-annotator"
 primary_region = "gru"
@@ -11,26 +11,23 @@ kill_timeout = 30   # seconds the app gets to flush unsaved annotations on shutd
 
 [env]
   PORT = "8080"
-  # Videos (a `publish --bundle`), index and annotations all live on the volume:
-  # no Google token that expires every 7 days. Set "drive" (plus the Drive
-  # secrets below and VIDEO_CACHE_DIR / ANNOTATOR_INDEX_DB) to use Drive instead.
-  ANNOTATOR_STORAGE = "volume"
-  ANNOTATOR_DATA_DIR = "/data"
+  # Everything lives on Google Drive (videos, index, annotations), like the frame
+  # annotator. No volume: the index and a small video cache sit on the machine's
+  # temporary disk and are rebuilt from Drive on every start. (ANNOTATOR_STORAGE =
+  # "volume" + a [mounts] section keeps everything on a Fly volume instead.)
+  ANNOTATOR_STORAGE = "drive"
+  ANNOTATOR_INDEX_DB = "/tmp/clip_annotator/index.sqlite"
+  VIDEO_CACHE_DIR = "/tmp/clip_annotator/cache"
+  VIDEO_CACHE_MAX_MB = "1000"
 
-# Secrets (never in this file): ANNOTATOR_TOKENS_JSON
-# Drive mode only: VIDEOS_DRIVE_FOLDER_ID, ANNOTATIONS_DRIVE_FOLDER_ID,
-# GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
-
-[mounts]
-  source = "clip_annotator_data"
-  destination = "/data"
-  initial_size = "3gb"
+# Secrets (never in this file): ANNOTATOR_TOKENS_JSON, VIDEOS_DRIVE_FOLDER_ID,
+# ANNOTATIONS_DRIVE_FOLDER_ID, GOOGLE_AUTHORIZED_USER_JSON (or GOOGLE_SERVICE_ACCOUNT_JSON)
 
 [http_service]
   internal_port = 8080
   force_https = true
-  # Stop when idle so an unused deployment costs only its volume. Volume mode writes
-  # every save straight to disk; Drive mode flushes its write-behind cache at exit.
+  # Stop when idle so an unused deployment costs nothing. Drive mode flushes its
+  # write-behind cache at exit (kill_signal / kill_timeout above).
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
