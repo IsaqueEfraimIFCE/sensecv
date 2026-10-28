@@ -46,6 +46,35 @@ class _Service:
         return _Request(self.outcomes)
 
 
+class _UploadService:
+    """Records the media object of each create() call."""
+
+    def __init__(self):
+        self.media = []
+
+    def files(self):
+        return self
+
+    def list(self, **kwargs):
+        return _Request([{"files": []}])
+
+    def create(self, body, media_body, fields, supportsAllDrives):
+        self.media.append(media_body)
+        return _Request([{"id": "new-file"}])
+
+
+@pytest.mark.parametrize("size, resumable", [(1024, False), (6 * 1024 * 1024, True)])
+def test_large_uploads_use_the_resumable_protocol(size, resumable):
+    client = DriveClient(credentials=None)
+    service = _UploadService()
+    client._local.service = service
+    assert client.upload("v.mp4", b"\0" * size, "parent", "video/mp4") == "new-file"
+    media = service.media[0]
+    assert media.resumable() is resumable
+    if resumable:
+        assert media.chunksize() % (256 * 1024) == 0
+
+
 def _http_error(status, reason=""):
     body = json.dumps({"error": {"errors": [{"reason": reason}]}}).encode()
     return HttpError(httplib2.Response({"status": status}), body)

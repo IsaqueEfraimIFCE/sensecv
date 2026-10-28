@@ -26,6 +26,8 @@ log = logging.getLogger(__name__)
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 FOLDER_MIME = "application/vnd.google-apps.folder"
 MAX_ATTEMPTS = 6
+SIMPLE_UPLOAD_MAX = 5 * 1024 * 1024
+UPLOAD_CHUNK = 8 * 1024 * 1024  # resumable chunks must be multiples of 256 KiB
 _RETRY_STATUSES = {429, 500, 502, 503, 504}
 _RETRY_REASONS = {"rateLimitExceeded", "userRateLimitExceeded", "backendError"}
 # Socket-level failures never reach HttpError: read timeouts, resets, TLS drops.
@@ -154,8 +156,13 @@ class DriveClient:
 
         file_id = file_id or self._find(name, parent_id)
 
+        # Drive's single-request (multipart) upload is meant for files up to 5 MB;
+        # videos are bigger, so they go through the resumable protocol in chunks.
+        resumable = len(data) > SIMPLE_UPLOAD_MAX
+
         def request(service):
-            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=resumable,
+                                      chunksize=UPLOAD_CHUNK if resumable else -1)
             if file_id:
                 return service.files().update(
                     fileId=file_id, media_body=media, fields="id", supportsAllDrives=True)
