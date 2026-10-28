@@ -56,9 +56,15 @@ def credentials_from_env(env: Mapping):
     path = env.get("GOOGLE_AUTHORIZED_USER_FILE")
     if path:
         return Credentials.from_authorized_user_file(path)
+    path = env.get("GOOGLE_ACCESS_TOKEN_FILE")
+    if path:
+        # A bare ~1 h bearer token ({"access_token": ...}): for one-off jobs on a
+        # remote machine, so the long-lived refresh token never leaves the laptop.
+        with open(path, encoding="utf-8") as handle:
+            return Credentials(token=json.load(handle)["access_token"])
     raise RuntimeError(
-        "no Google credentials: set GOOGLE_AUTHORIZED_USER_JSON, GOOGLE_AUTHORIZED_USER_FILE "
-        "or GOOGLE_SERVICE_ACCOUNT_JSON"
+        "no Google credentials: set GOOGLE_AUTHORIZED_USER_JSON, GOOGLE_AUTHORIZED_USER_FILE, "
+        "GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_ACCESS_TOKEN_FILE"
     )
 
 

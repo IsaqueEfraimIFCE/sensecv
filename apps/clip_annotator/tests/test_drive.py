@@ -6,7 +6,20 @@ import pytest
 from googleapiclient.errors import HttpError
 
 from clip_annotator import drive as drive_module
-from clip_annotator.drive import DriveClient, DriveQuotaError
+from clip_annotator.drive import DriveClient, DriveQuotaError, credentials_from_env
+
+
+def test_access_token_file_gives_bearer_only_credentials(tmp_path):
+    path = tmp_path / "access_token.json"
+    path.write_text(json.dumps({"access_token": "ya29.test"}), encoding="utf-8")
+    creds = credentials_from_env({"GOOGLE_ACCESS_TOKEN_FILE": str(path)})
+    assert creds.token == "ya29.test"
+    assert creds.refresh_token is None  # nothing long-lived on the remote machine
+
+
+def test_missing_credentials_names_every_option():
+    with pytest.raises(RuntimeError, match="GOOGLE_ACCESS_TOKEN_FILE"):
+        credentials_from_env({})
 
 
 class _Request:
