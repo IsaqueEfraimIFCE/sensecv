@@ -7,7 +7,9 @@ and *what kind* it is, using the vocabulary of the SenseCV viewer's crop form:
 * ``side``: ``esquerda`` / ``direita`` - where the person goes, required for a
   desvio and absent for a parada;
 * ``obstacle``: ``centro`` / ``esquerda`` / ``direita`` / ``nao_visivel`` -
-  where the obstacle sits in the path (optional);
+  where the obstacle sits in the path. For a desvio it is always the side
+  opposite the deviation and is filled in automatically; for a parada it is
+  optional;
 * ``start_s`` (T1, the body starts to react) and ``end_s`` (T2, the trajectory
   is stable again / the person is fully stopped). ``end_s`` is required for a
   desvio and optional for a parada.
@@ -25,6 +27,8 @@ from typing import Optional
 KINDS = ("desvio", "parada")
 SIDES = ("esquerda", "direita")
 OBSTACLES = ("centro", "esquerda", "direita", "nao_visivel")
+# Recording protocol: a desvio to one side means the obstacle is on the other.
+OBSTACLE_FOR_SIDE = {"esquerda": "direita", "direita": "esquerda"}
 VERDICTS = ("eventos", "sem_evento", "inutilizavel")
 WITH_EVENTS = "eventos"
 DESVIO = "desvio"
@@ -87,6 +91,12 @@ class Event:
             raise ValueError("a parada has no side")
         obstacle = raw.get("obstacle")
         _check_choice(obstacle, OBSTACLES, "obstacle", optional=True)
+        if kind == DESVIO:
+            # The person always goes around the obstacle on the free side.
+            derived = OBSTACLE_FOR_SIDE[side]
+            if obstacle not in (None, derived):
+                raise ValueError(f"a desvio to the {side} has the obstacle on the {derived}")
+            obstacle = derived
         start = _time(raw.get("start_s"), "start_s", limit)
         end = raw.get("end_s")
         if end is None:

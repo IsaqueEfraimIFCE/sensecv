@@ -137,10 +137,13 @@ def build_local_index(root, index: IndexDb) -> int:
     return added
 
 
-def build_bundle(root, out_dir) -> int:
+def build_bundle(root, out_dir, *, link: bool = False) -> int:
     """Volume deployment: ``<out>/videos/<clip_id>.mp4`` plus ``<out>/index.sqlite``
     whose ``video_ref`` is the file name. Copy the folder to the server's data
-    volume as-is. Resumable: clips already in the index are skipped."""
+    volume as-is. Resumable: clips already in the index are skipped.
+
+    ``link=True`` hard-links each video instead of copying it (same filesystem
+    only), so indexing recordings already on the server costs no extra space."""
     out = Path(out_dir)
     videos = out / "videos"
     videos.mkdir(parents=True, exist_ok=True)
@@ -152,7 +155,12 @@ def build_bundle(root, out_dir) -> int:
         if source.clip_id in known:
             continue
         name = f"{source.clip_id}.mp4"
-        shutil.copyfile(source.video, videos / name)
+        target = videos / name
+        target.unlink(missing_ok=True)  # a leftover from an interrupted run
+        if link:
+            os.link(source.video, target)
+        else:
+            shutil.copyfile(source.video, target)
         index.add_clip(_row(source, name))
         added += 1
     return added

@@ -28,8 +28,28 @@ def test_events_are_sorted_and_set_the_verdict(empty):
 
 def test_event_json_carries_frames_shown_at_each_time(empty):
     event = empty.replace_with({"events": [desvio(2.0, 3.5)]}).to_json()["events"][0]
-    assert event == {"kind": "desvio", "side": "esquerda", "obstacle": "centro",
+    assert event == {"kind": "desvio", "side": "esquerda", "obstacle": "direita",
                      "start_s": 2.0, "end_s": 3.5, "start_frame": 60, "end_frame": 105}
+
+
+@pytest.mark.parametrize("side, obstacle", [("esquerda", "direita"), ("direita", "esquerda")])
+def test_desvio_obstacle_is_always_the_opposite_side(empty, side, obstacle):
+    doc = empty.replace_with({"events": [desvio(side=side)]})
+    assert doc.events[0].obstacle == obstacle
+    assert empty.replace_with({"events": [desvio(side=side, obstacle=obstacle)]}) == doc
+
+
+@pytest.mark.parametrize("side, obstacle", [
+    ("esquerda", "esquerda"), ("direita", "direita"), ("esquerda", "centro"), ("direita", "nao_visivel"),
+])
+def test_desvio_rejects_an_obstacle_on_its_own_side(empty, side, obstacle):
+    with pytest.raises(ValueError, match="obstacle on the"):
+        empty.replace_with({"events": [desvio(side=side, obstacle=obstacle)]})
+
+
+def test_parada_keeps_its_optional_obstacle(empty):
+    assert empty.replace_with({"events": [parada(obstacle="centro")]}).events[0].obstacle == "centro"
+    assert empty.replace_with({"events": [parada()]}).events[0].obstacle is None
 
 
 def test_frame_at_uses_floor():

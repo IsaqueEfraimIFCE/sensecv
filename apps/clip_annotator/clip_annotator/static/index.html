@@ -77,8 +77,8 @@ kbd{background:var(--panel-2);border:1px solid var(--border);border-bottom-width
 .rchip:hover:not(:disabled){border-color:var(--accent);color:var(--text)}
 .rchip.active{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:var(--accent);color:var(--accent);font-weight:600}
 .rchip:disabled{opacity:.35;cursor:default}
-.cond-desvio{display:none}
-.show-desvio .cond-desvio{display:flex}
+.cond-desvio,.cond-parada{display:none}
+.show-desvio .cond-desvio,.show-parada .cond-parada{display:flex}
 .btn-row{display:flex;gap:6px;margin-top:12px}
 .btn{flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;font-size:var(--fs-sm);font-weight:600;transition:all .15s;background:var(--panel);color:var(--text);font-family:inherit}
 .btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
@@ -202,7 +202,7 @@ tr.row:hover td{background:var(--panel)}
     <div class="keys">
       <kbd>Espaço</kbd> reproduzir · <kbd>←</kbd><kbd>→</kbd> quadro · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s ·
       <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>D</kbd> desvio · <kbd>P</kbd> parada · <kbd>Q</kbd>/<kbd>E</kbd> esquerda/direita ·
-      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>0</kbd> obstáculo · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar ·
+      <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>0</kbd> obstáculo (parada) · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar ·
       <kbd>[</kbd><kbd>]</kbd> velocidade · <kbd>Enter</kbd> concluir e próximo
     </div>
   </div>
@@ -240,8 +240,9 @@ tr.row:hover td{background:var(--panel)}
           <button class="rchip" data-val="esquerda" type="button">Esquerda (Q)</button>
           <button class="rchip" data-val="direita" type="button">Direita (E)</button>
         </div>
+        <div class="input-hint" id="derived-obstacle"></div>
       </div>
-      <div class="form-row">
+      <div class="form-row cond-parada">
         <label>Posição do obstáculo no caminho (opcional)</label>
         <div class="radio-group" id="rg-obstacle">
           <button class="rchip" data-val="esquerda" type="button">Esquerda (1)</button>
@@ -320,8 +321,10 @@ tr.row:hover td{background:var(--panel)}
     </table>
 
     <h3>Posição do obstáculo</h3>
-    <p>Onde o obstáculo está no caminho no momento do início: esquerda, centro ou direita. Use <em>Não visível</em>
-      se não der para ver o obstáculo. Este campo é opcional.</p>
+    <p>No <strong>desvio</strong> o obstáculo fica sempre do lado oposto ao desvio: desvio à esquerda = obstáculo à direita,
+      desvio à direita = obstáculo à esquerda. O app preenche isso sozinho; você só escolhe a direção.</p>
+    <p>Na <strong>parada</strong>, indique onde o obstáculo está no caminho no momento do início: esquerda, centro ou
+      direita. Use <em>Não visível</em> se não der para ver o obstáculo. Este campo é opcional.</p>
 
     <h3>Clipes sem evento</h3>
     <ul>
@@ -336,7 +339,7 @@ tr.row:hover td{background:var(--panel)}
         <tr><td><kbd>Espaço</kbd></td><td>reproduzir / pausar</td><td><kbd>I</kbd> / <kbd>O</kbd></td><td>marcar início / fim</td></tr>
         <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>um quadro</td><td><kbd>D</kbd> / <kbd>P</kbd></td><td>desvio / parada</td></tr>
         <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>um segundo</td><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>esquerda / direita</td></tr>
-        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd></td><td>obstáculo esquerda / centro / direita / não visível</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>0</kbd></td><td>obstáculo da parada: esquerda / centro / direita / não visível</td></tr>
         <tr><td><kbd>A</kbd></td><td>adicionar / salvar evento</td><td><kbd>Esc</kbd></td><td>limpar marcas / cancelar edição</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>concluir e ir ao próximo</td><td></td><td></td></tr>
       </tbody>
@@ -360,6 +363,8 @@ const OBSTACLE_NAMES = { esquerda: "obstáculo à esquerda", centro: "obstáculo
 const STATUS_NAMES = { pendente: "Pendente", andamento: "Em andamento", concluido: "Concluído" };
 const VERDICT_NAMES = { sem_evento: "Sem evento", inutilizavel: "Inutilizável" };
 const OBSTACLE_KEYS = { "1": "esquerda", "2": "centro", "3": "direita", "0": "nao_visivel" };
+// Protocolo de coleta: desvio à esquerda => obstáculo à direita, e vice-versa.
+const OPPOSITE_SIDE = { esquerda: "direita", direita: "esquerda" };
 const COLORS = { esquerda: "#86c5ff", direita: "#c79bff", parada: "#ff6b61" };
 
 const video = $("video");
@@ -685,6 +690,9 @@ function renderDraft() {
   setChips("rg-side", d.side);
   setChips("rg-obstacle", d.obstacle);
   $("draft-section").classList.toggle("show-desvio", d.kind === "desvio");
+  $("draft-section").classList.toggle("show-parada", d.kind === "parada");
+  $("derived-obstacle").textContent = d.side
+    ? `Obstáculo: à ${OPPOSITE_SIDE[d.side]} (automático: sempre do lado oposto ao desvio)` : "";
   const editing = state.editing != null;
   $("draft-title").textContent = editing ? `Editando evento ${state.editing + 1}` : "Marcar evento";
   $("btn-add").textContent = editing ? "✓ Salvar alterações (A)" : "＋ Adicionar evento (A)";
@@ -771,9 +779,13 @@ function markStart() { if (state.ann.done) return; state.draft.start_s = round3(
 function markEnd() { if (state.ann.done) return; state.draft.end_s = round3(video.currentTime); renderDraft(); drawTimelines(); }
 function setDraft(field, value) {
   if (state.ann.done) return;
-  state.draft[field] = state.draft[field] === value && field === "obstacle" ? null : value;
-  if (field === "kind" && value === "parada") state.draft.side = null;
-  if (field === "side") state.draft.kind = "desvio";
+  const d = state.draft;
+  if (field === "obstacle" && d.kind !== "parada") return;  // num desvio o obstáculo é automático
+  d[field] = d[field] === value && field === "obstacle" ? null : value;
+  if (field === "side") d.kind = "desvio";
+  // O obstáculo de um desvio fica sempre do lado oposto; ao trocar de tipo, recomeça vazio.
+  if (field === "kind" && value === "parada") { d.side = null; d.obstacle = null; }
+  if (d.kind === "desvio") d.obstacle = d.side ? OPPOSITE_SIDE[d.side] : null;
   renderDraft();
 }
 
@@ -792,7 +804,9 @@ function sortEvents(events) { return events.sort((a, b) => a.start_s - b.start_s
 function commitDraft() {
   if (state.ann.done || draftProblem()) { renderDraft(); return; }
   const d = state.draft;
-  const event = { kind: d.kind, side: d.kind === "desvio" ? d.side : null, obstacle: d.obstacle,
+  const isDesvio = d.kind === "desvio";
+  const event = { kind: d.kind, side: isDesvio ? d.side : null,
+                  obstacle: isDesvio ? OPPOSITE_SIDE[d.side] : d.obstacle,
                   start_s: d.start_s, end_s: d.end_s };
   const events = state.ann.events.slice();
   if (state.editing != null) events[state.editing] = event; else events.push(event);

@@ -3,6 +3,7 @@
 # (rename `app` if the name is taken)
 app = "sensecv-clip-annotator"
 primary_region = "gru"
+kill_signal = "SIGTERM"   # gunicorn graceful stop (Fly's default SIGINT is an abrupt one)
 kill_timeout = 30   # seconds the app gets to flush unsaved annotations on shutdown
 
 [build]
@@ -28,9 +29,11 @@ kill_timeout = 30   # seconds the app gets to flush unsaved annotations on shutd
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = "off"   # keep the in-memory write-through cache warm
+  # Stop when idle so an unused deployment costs only its volume. Volume mode writes
+  # every save straight to disk; Drive mode flushes its write-behind cache at exit.
+  auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
 
   [[http_service.checks]]
     method = "GET"

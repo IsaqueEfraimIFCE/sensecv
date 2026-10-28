@@ -108,5 +108,5 @@ def clip():
                 10.0, 30.0, 300, "fid-video", 1234)
 
 
-def desvio(start=2.0, end=3.0, side="esquerda", obstacle="centro"):
+def desvio(start=2.0, end=3.0, side="esquerda", obstacle=None):
     return {"kind": "desvio", "side": side, "obstacle": obstacle, "start_s": start, "end_s": end}
