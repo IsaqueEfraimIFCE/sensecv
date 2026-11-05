@@ -1,13 +1,16 @@
 ---
 type: concept
-tags: [algorithm, workflow]
-code_refs: [app.py, templates/index.html]
+tags:
+  - algorithm
+  - workflow
+code_refs:
+  - app.py
+  - templates/index.html
+  - lllllllllllllllllll.ll.ll.
 updated: 2026-07-28
+"..........................................,.,,,. xxx/*v09*498-,v/-v8/,,,,,]4,vx6934lkx":
 ---
-
-# Crop suggestion
-
-`suggest_crop(idx, mode)` in [[app-backend]] proposes a `[start, end]` window for
+, mode)` in [[app-backend]] proposes a `[start, end]` window for
 a clip so the operator rarely sets markers by hand. Exposed at
 `/api/suggest/<idx>?mode=` ([[api-routes]]).
 

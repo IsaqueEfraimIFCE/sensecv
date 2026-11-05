@@ -1,0 +1,1471 @@
+<title>SenseCV Experiment Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;1,400&display=swap">
+
+<style>
+  /* ---- tokens: complete light palette on bare :root ---- */
+  :root {
+    --ground:      #F2F4F3;
+    --surface:     #FFFFFF;
+    --surface-alt: #E9EDEB;
+    --ink:         #171C1F;
+    --ink-mid:     #45514F;
+    --ink-soft:    #6B7876;
+    --rule:        #C9D0CE;
+    --rule-soft:   #DDE2E0;
+    --accent:      #C2751E;
+    --accent-soft: #F3E3CD;
+    --teal:        #1F6F6B;
+    --teal-soft:   #D8E8E6;
+    --clay:        #A23E2E;
+    --clay-soft:   #F2DEDA;
+
+    --f-sans:  "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    --f-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --f-mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+    --col: 68ch;
+    --rail: 15rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #101315;
+      --surface:     #171B1D;
+      --surface-alt: #1E2426;
+      --ink:         #E4E9E7;
+      --ink-mid:     #AEB9B7;
+      --ink-soft:    #808D8B;
+      --rule:        #333B3D;
+      --rule-soft:   #262D2F;
+      --accent:      #E8A34E;
+      --accent-soft: #3A2B15;
+      --teal:        #4FA6A0;
+      --teal-soft:   #16302E;
+      --clay:        #D4705C;
+      --clay-soft:   #35201B;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #101315;
+    --surface:     #171B1D;
+    --surface-alt: #1E2426;
+    --ink:         #E4E9E7;
+    --ink-mid:     #AEB9B7;
+    --ink-soft:    #808D8B;
+    --rule:        #333B3D;
+    --rule-soft:   #262D2F;
+    --accent:      #E8A34E;
+    --accent-soft: #3A2B15;
+    --teal:        #4FA6A0;
+    --teal-soft:   #16302E;
+    --clay:        #D4705C;
+    --clay-soft:   #35201B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-serif);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    display: grid;
+    grid-template-columns: var(--rail) minmax(0, 1fr);
+    gap: 0 3.5rem;
+    max-width: 76rem;
+    margin: 0 auto;
+    padding: 0 2rem;
+    align-items: start;
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 3.5rem 0 1.75rem;
+    margin-bottom: 2.5rem;
+  }
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 0.7rem;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 1rem;
+  }
+  h1 {
+    font-family: var(--f-sans);
+    font-weight: 700;
+    font-size: clamp(2.1rem, 5vw, 3.1rem);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.1rem;
+    line-height: 1.55;
+    color: var(--ink-mid);
+    max-width: 58ch;
+    margin: 0 0 2rem;
+  }
+  .tallies {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 2.5rem;
+    row-gap: 1.25rem;
+    border-top: 1px solid var(--rule);
+    padding-top: 1.5rem;
+  }
+  .tally { display: flex; flex-direction: column; gap: 0.15rem; }
+  .tally b {
+    font-family: var(--f-mono);
+    font-size: 1.6rem;
+    font-weight: 600;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .tally span {
+    font-family: var(--f-sans);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  /* ---------- index rail ---------- */
+  .rail {
+    position: sticky;
+    top: 1.5rem;
+    font-family: var(--f-sans);
+    font-size: 0.82rem;
+    padding-bottom: 3rem;
+    max-height: calc(100vh - 3rem);
+    overflow-y: auto;
+  }
+  .rail h2 {
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0 0 0.85rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .rail h2 + ol { margin-bottom: 1.5rem; }
+  .rail ol { list-style: none; margin: 0 0 1.5rem; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+  .rail a {
+    color: var(--ink-mid);
+    text-decoration: none;
+    display: flex;
+    gap: 0.55rem;
+    line-height: 1.35;
+    border-left: 2px solid transparent;
+    padding-left: 0.6rem;
+    margin-left: -0.6rem;
+  }
+  .rail a:hover { color: var(--accent); border-left-color: var(--accent); }
+  .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .rail code {
+    font-family: var(--f-mono);
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    flex: none;
+    padding-top: 0.08em;
+  }
+
+  /* ---------- body column ---------- */
+  main { min-width: 0; padding-bottom: 5rem; }
+  section { margin-bottom: 3.5rem; scroll-margin-top: 1.5rem; }
+
+  .series-head { border-top: 2px solid var(--ink); padding-top: 1rem; margin-bottom: 2rem; }
+  .series-head p {
+    font-family: var(--f-serif);
+    color: var(--ink-mid);
+    max-width: var(--col);
+    margin: 0.6rem 0 0;
+  }
+  h2.series {
+    font-family: var(--f-sans);
+    font-weight: 600;
+    font-size: 1.45rem;
+    letter-spacing: -0.02em;
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.8rem;
+    text-wrap: balance;
+  }
+  h2.series em {
+    font-family: var(--f-mono);
+    font-style: normal;
+    font-size: 0.78rem;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    flex: none;
+  }
+
+  /* ---------- record ---------- */
+  .rec {
+    border-top: 1px solid var(--rule);
+    padding: 1.6rem 0 0.4rem;
+    scroll-margin-top: 1.5rem;
+  }
+  .rec:first-of-type { border-top-color: var(--rule-soft); }
+  .rec-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.6rem 0.9rem;
+    margin-bottom: 1.1rem;
+  }
+  .rec-id {
+    font-family: var(--f-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--ground);
+    background: var(--ink);
+    padding: 0.2rem 0.45rem;
+    flex: none;
+  }
+  .rec-head h3 {
+    font-family: var(--f-sans);
+    font-weight: 600;
+    font-size: 1.1rem;
+    letter-spacing: -0.012em;
+    margin: 0;
+    flex: 1 1 20ch;
+    text-wrap: balance;
+  }
+  .verdict {
+    font-family: var(--f-sans);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 0.22rem 0.5rem;
+    border: 1px solid currentColor;
+    flex: none;
+    white-space: nowrap;
+  }
+  .v-confirmed { color: var(--teal);   background: var(--teal-soft); }
+  .v-refuted   { color: var(--clay);   background: var(--clay-soft); }
+  .v-open      { color: var(--accent); background: var(--accent-soft); }
+  .v-built     { color: var(--ink-mid); background: var(--surface-alt); }
+
+  dl.qa {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.75rem 1.25rem;
+    margin: 0;
+    max-width: calc(var(--col) + 6.75rem);
+  }
+  dl.qa dt {
+    font-family: var(--f-sans);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding-top: 0.35em;
+    border-top: 1px solid var(--rule-soft);
+  }
+  dl.qa dd {
+    margin: 0;
+    padding-top: 0.2em;
+    border-top: 1px solid var(--rule-soft);
+  }
+  dl.qa dd:last-of-type { padding-bottom: 0.4rem; }
+  dl.qa dd.concl { font-weight: 500; }
+  dl.qa dd.concl strong { color: var(--accent); font-weight: 600; }
+
+  p { margin: 0 0 0.8rem; max-width: var(--col); }
+  p:last-child { margin-bottom: 0; }
+
+  code, .num {
+    font-family: var(--f-mono);
+    font-size: 0.86em;
+    font-variant-numeric: tabular-nums;
+  }
+  code { color: var(--ink-mid); }
+  dd code, li code, p code { background: var(--surface-alt); padding: 0.05em 0.28em; }
+  dd code { color: inherit; }
+  .num { font-weight: 500; }
+
+  /* ---------- definition panel ---------- */
+  .defs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1px;
+    background: var(--rule-soft);
+    border: 1px solid var(--rule-soft);
+    margin: 1.2rem 0 0.5rem;
+  }
+  .def { background: var(--surface); padding: 0.9rem 1rem; }
+  .def h4 {
+    font-family: var(--f-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    color: var(--accent);
+  }
+  .def p { font-size: 0.88rem; margin: 0; line-height: 1.5; color: var(--ink-mid); }
+
+  /* ---------- window diagram ---------- */
+  figure.win {
+    margin: 1.1rem 0 0.4rem;
+    padding: 1rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--rule-soft);
+    max-width: var(--col);
+  }
+  figure.win svg { display: block; width: 100%; height: auto; overflow: visible; }
+  figure.win figcaption {
+    font-family: var(--f-sans);
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    margin-top: 0.75rem;
+    line-height: 1.45;
+  }
+  .win-lab { font-family: var(--f-mono); font-size: 8px; font-weight: 500; letter-spacing: 0.04em; }
+
+  /* ---------- tables ---------- */
+  .scroller {
+    overflow-x: auto;
+    margin: 1.2rem 0 0.5rem;
+    border: 1px solid var(--rule-soft);
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--f-mono);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+  }
+  caption {
+    caption-side: top;
+    text-align: left;
+    font-family: var(--f-sans);
+    font-size: 0.76rem;
+    font-weight: 500;
+    color: var(--ink-soft);
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--rule-soft);
+    line-height: 1.45;
+  }
+  th, td { padding: 0.4rem 0.7rem; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    font-family: var(--f-sans);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--rule);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+  }
+  tbody tr + tr td { border-top: 1px solid var(--rule-soft); }
+  tbody tr:hover td { background: var(--surface-alt); }
+  td.best { color: var(--accent); font-weight: 600; }
+  td.pos  { color: var(--teal); }
+  td.neg  { color: var(--clay); }
+  .rowlab { font-weight: 500; color: var(--ink); }
+  .rank { color: var(--ink-soft); }
+
+  .pill {
+    font-family: var(--f-sans);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    padding: 0.1rem 0.35rem;
+    border: 1px solid currentColor;
+  }
+  .p-arch { color: var(--ink-soft); }
+  .p-camp { color: var(--teal); }
+
+  /* ---------- callout ---------- */
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 0.9rem 1.1rem;
+    margin: 1.2rem 0 0.5rem;
+    max-width: var(--col);
+    font-size: 0.94rem;
+  }
+  .note b { font-family: var(--f-sans); font-weight: 600; }
+  .note.warn { border-left-color: var(--clay); }
+
+  ul.plain { margin: 0.6rem 0 0.8rem; padding-left: 1.1rem; max-width: var(--col); }
+  ul.plain li { margin-bottom: 0.5rem; }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 2px solid var(--ink);
+    padding: 1.5rem 0 3.5rem;
+    font-family: var(--f-sans);
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+  }
+  footer p { max-width: var(--col); }
+
+  @media (max-width: 62rem) {
+    .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    .rail { position: static; max-height: none; border-bottom: 1px solid var(--rule); margin-bottom: 2.5rem; }
+    .rail ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.4rem 1.5rem; }
+  }
+  @media (max-width: 34rem) {
+    .wrap { padding: 0 1.15rem; }
+    dl.qa { grid-template-columns: minmax(0, 1fr); gap: 0.15rem; }
+    dl.qa dd { border-top: none; padding-top: 0; margin-bottom: 0.7rem; }
+    dl.qa dt { border-top: 1px solid var(--rule-soft); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">SenseCV · two-head obstacle &amp; deviation classifier</p>
+    <h1>SenseCV Experiment Ledger</h1>
+    <p class="standfirst">
+      Every test run against the classifier — what was tested, why, how, and what it
+      settled. Three provenance audits, five datasets, five architectures, thirty
+      training runs, and twenty results on one common test set.
+    </p>
+    <div class="tallies">
+      <div class="tally"><b>20</b><span>Results, common test</span></div>
+      <div class="tally"><b>5</b><span>Architectures</span></div>
+      <div class="tally"><b>5</b><span>Datasets</span></div>
+      <div class="tally"><b>3</b><span>Audits</span></div>
+      <div class="tally"><b>3,970</b><span>Test frames</span></div>
+      <div class="tally"><b>52,719</b><span>Frame pool</span></div>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <h2>Start here</h2>
+    <ol>
+      <li><a href="#reading"><code>§0</code> Reading the numbers</a></li>
+      <li><a href="#leaderboard"><code>§0</code> The leaderboard</a></li>
+    </ol>
+    <h2>A · Audits</h2>
+    <ol>
+      <li><a href="#a1"><code>A1</code> Split provenance</a></li>
+      <li><a href="#a2"><code>A2</code> Per-head reduction</a></li>
+      <li><a href="#a3"><code>A3</code> Join collision</a></li>
+    </ol>
+    <h2>B · The archive</h2>
+    <ol>
+      <li><a href="#b1"><code>B1</code> What it contains</a></li>
+      <li><a href="#b2"><code>B2</code> Architecture comparison</a></li>
+      <li><a href="#b3"><code>B3</code> Frame vs clip splits</a></li>
+      <li><a href="#b4"><code>B4</code> ConvLSTM's status</a></li>
+    </ol>
+    <h2>D · Datasets</h2>
+    <ol>
+      <li><a href="#d1"><code>D1</code> run4 reproduction</a></li>
+      <li><a href="#d2"><code>D2</code> Distinct frames</a></li>
+      <li><a href="#d3"><code>D3</code> Distinct + flip</a></li>
+      <li><a href="#d4"><code>D4</code> Janela 0.5 s</a></li>
+      <li><a href="#d5"><code>D5</code> Janela 10 frames</a></li>
+    </ol>
+    <h2>E · Training</h2>
+    <ol>
+      <li><a href="#e1"><code>E1</code> Full rate</a></li>
+      <li><a href="#e2"><code>E2</code> 5 FPS</a></li>
+      <li><a href="#e3"><code>E3</code> DINOv2 0.98</a></li>
+      <li><a href="#e4"><code>E4</code> Held-out day</a></li>
+      <li><a href="#e5"><code>E5</code> DINOv2 ladder</a></li>
+    </ol>
+    <h2>V · Evaluation</h2>
+    <ol>
+      <li><a href="#v1"><code>V1</code> Six-set matrix</a></li>
+      <li><a href="#v2"><code>V2</code> Tail comparison</a></li>
+      <li><a href="#v3"><code>V3</code> Full janela table</a></li>
+    </ol>
+    <h2>Outcome</h2>
+    <ol>
+      <li><a href="#findings">Findings for the paper</a></li>
+      <li><a href="#open">Open threads</a></li>
+      <li><a href="#where">Where everything lives</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ============ §0 READING ============ -->
+    <section id="reading">
+      <div class="series-head">
+        <h2 class="series"><em>§ 0</em> Reading the numbers</h2>
+        <p>
+          Results in this ledger come from two archives produced months apart under
+          different training recipes. They share one test set exactly, which is what makes
+          them comparable at all — and the differences are what stop them being comparable
+          in every respect. Read this section before quoting anything below.
+        </p>
+      </div>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">0.1</span><h3>The common test set</h3></div>
+        <p>
+          Every number in the leaderboard is measured on the <b>same 3,970 frames</b>: every
+          clip whose day-of-month is 22 or 24, held out before any split is drawn. It is a
+          <em>natural</em> split — no balancing or reduction is ever applied to it — and it
+          decomposes as <span class="num">3,156</span> day-22 frames plus
+          <span class="num">814</span> day-24 UFC frames, over <span class="num">118</span> clips.
+        </p>
+        <div class="scroller">
+          <table>
+            <caption>Class composition. Verified identical between the two archives before they were merged — this check is what licenses the combined table.</caption>
+            <thead><tr><th scope="col">Head</th><th scope="col" colspan="3">Support</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlab">obstacle</td><td>free_path 1,740</td><td>obstacle 2,230</td><td>— </td></tr>
+              <tr><td class="rowlab">deviation</td><td>left 1,247</td><td>right 983</td><td>none 1,740</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">0.2</span><h3>What each metric means</h3></div>
+        <div class="defs">
+          <div class="def">
+            <h4>joint accuracy</h4>
+            <p>Fraction of frames where <em>both</em> heads are simultaneously correct. The strictest measure, and the one to rank by — it is what the downstream route decision actually depends on.</p>
+          </div>
+          <div class="def">
+            <h4>obstacle / deviation accuracy</h4>
+            <p>Per-head accuracy, treated independently. Always higher than joint. A high obstacle score with a low joint score means the deviation head is carrying the failure.</p>
+          </div>
+          <div class="def">
+            <h4>macro_f1_presentes</h4>
+            <p>Macro F1 over only the classes with non-zero support. Necessary on the janela sets, which contain no <code>free_path</code> and no <code>none</code> frames — plain macro F1 there averages in classes that cannot occur.</p>
+          </div>
+          <div class="def">
+            <h4>route accuracy</h4>
+            <p>The two heads decoded into one four-way decision: <code>forward</code> = free_path+none, <code>stop</code> = obstacle+none, <code>left</code>/<code>right</code> = the deviation regardless of obstacle. The end-user-facing metric.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">0.3</span><h3>Two training regimes, one test set</h3></div>
+        <p>
+          The single most important caveat in this document. The archived runs and the
+          campaign runs optimize different objectives, so a cross-group comparison is
+          suggestive rather than controlled.
+        </p>
+        <div class="scroller">
+          <table>
+            <caption>What differs between the two groups. Everything else — 224×224, batch 32, AdamW <code>lr 1e-4 / wd 1e-4</code>, 40 epochs, patience 6, seed 43, horizontal flip on train — is shared.</caption>
+            <thead>
+              <tr><th scope="col"></th><th scope="col">Archived <span class="pill p-arch">A</span></th><th scope="col">Campaign <span class="pill p-camp">C</span></th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="rowlab">Background balance</td><td>per-head, at train time</td><td>baked into the dataset</td></tr>
+              <tr><td class="rowlab">Loss</td><td>masked to one head per row</td><td>CE(obs) + CE(dev), every frame</td></tr>
+              <tr><td class="rowlab">Frames counted twice</td><td>yes — 8,771 of them</td><td>no</td></tr>
+              <tr><td class="rowlab">Train rows</td><td>31,500 – 33,118</td><td>24,347 – 34,394</td></tr>
+              <tr><td class="rowlab">Architectures</td><td>4 CNNs</td><td>mobilenetv4, dinov2</td></tr>
+              <tr><td class="rowlab">Provenance</td><td>Kaggle <code>ss2ere</code> artifacts</td><td>local re-scoring, one pass</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note warn">
+          <b>The archived scores are self-reported; the campaign scores are not.</b> Each archived
+          number was written by the run that produced it, on its own test pass. Every campaign
+          number comes from a single re-scoring pass in which all eleven checkpoints predicted
+          over one shared frame list. Where the two archives overlap they agree to the digit,
+          which is reassuring — but only the campaign group is internally consistent by
+          construction.
+        </div>
+      </article>
+    </section>
+
+    <!-- ============ LEADERBOARD ============ -->
+    <section id="leaderboard">
+      <div class="series-head">
+        <h2 class="series"><em>§ 0</em> The leaderboard</h2>
+        <p>
+          All twenty unique results on the 3,970-frame test set, from both archives.
+          Ranked by joint accuracy.
+        </p>
+      </div>
+
+      <article class="rec">
+        <div class="scroller">
+          <table>
+            <caption>
+              <span class="pill p-arch">A</span> archived sibgrapi run ·
+              <span class="pill p-camp">C</span> campaign re-scoring.
+              <b>val</b> is the run's own best validation loss where it was recorded — see the note below it.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">#</th>
+                <th scope="col">Architecture</th>
+                <th scope="col">Run / config</th>
+                <th scope="col">Joint</th>
+                <th scope="col">Obstacle</th>
+                <th scope="col">Deviation</th>
+                <th scope="col">Dev F1</th>
+                <th scope="col">Val</th>
+                <th scope="col">Src</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="rank">1</td><td class="rowlab">mobilenetv1</td><td>run4_1</td><td class="best">0.9453</td><td>0.9534</td><td>0.9572</td><td>0.9577</td><td>0.0003</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">2</td><td class="rowlab">mobilenetv4</td><td>run2_2</td><td>0.9355</td><td>0.9521</td><td>0.9368</td><td>0.9369</td><td>0.0882</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">3</td><td class="rowlab">mobilenetv4</td><td>full_rate/uniao</td><td>0.9156</td><td class="best">0.9746</td><td>0.9194</td><td>0.9158</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">4</td><td class="rowlab">dinov2 ViT-S/14</td><td>dinov2/ultimos1</td><td>0.8965</td><td>0.9065</td><td>0.9015</td><td>0.9027</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">5</td><td class="rowlab">dinov2 ViT-S/14</td><td>dinov2/ultimos2</td><td>0.8856</td><td>0.9531</td><td>0.8867</td><td>0.8867</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">6</td><td class="rowlab">mobilenetv4</td><td>full_rate/baseline</td><td>0.8806</td><td>0.8995</td><td>0.8917</td><td>0.8903</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">7</td><td class="rowlab">mobilenetv4</td><td>dia_validacao/baseline</td><td>0.8710</td><td>0.9264</td><td>0.8743</td><td>0.8705</td><td>0.2750</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">8</td><td class="rowlab">resnet50</td><td>run2_3</td><td>0.8690</td><td>0.9179</td><td>0.8836</td><td>0.8828</td><td>0.0726</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">9</td><td class="rowlab">mobilenetv1</td><td>run1_1</td><td>0.8501</td><td>0.9519</td><td>0.8622</td><td>0.8588</td><td>0.1208</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">10</td><td class="rowlab">efficientnet_b0</td><td>run2_0</td><td>0.8275</td><td>0.9149</td><td>0.8300</td><td>0.8148</td><td>0.0565</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">11</td><td class="rowlab">mobilenetv4</td><td>fps5/baseline</td><td>0.8103</td><td>0.8363</td><td>0.8270</td><td>0.8304</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">12</td><td class="rowlab">mobilenetv4</td><td>dino098/uniao</td><td>0.8068</td><td>0.8171</td><td>0.8363</td><td>0.8353</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">13</td><td class="rowlab">mobilenetv4</td><td>dia_validacao/uniao</td><td>0.7856</td><td>0.8952</td><td>0.7947</td><td>0.7891</td><td>1.1860</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">14</td><td class="rowlab">mobilenetv4</td><td>run1_2</td><td>0.7811</td><td>0.9668</td><td>0.7884</td><td>0.7813</td><td>0.1340</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">15</td><td class="rowlab">mobilenetv1</td><td>run2_1</td><td>0.7746</td><td>0.8846</td><td>0.7836</td><td>0.7775</td><td>0.0840</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">16</td><td class="rowlab">mobilenetv4</td><td>dino098/baseline</td><td>0.7307</td><td>0.7763</td><td>0.7461</td><td>0.7325</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">17</td><td class="rowlab">efficientnet_b0</td><td>run1_0</td><td>0.7013</td><td>0.9390</td><td>0.7073</td><td>0.6728</td><td>0.1036</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">18</td><td class="rowlab">mobilenetv4</td><td>fps5/uniao</td><td>0.5861</td><td>0.8471</td><td>0.6259</td><td>0.5804</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+              <tr><td class="rank">19</td><td class="rowlab">resnet50</td><td>run1_3</td><td>0.5678</td><td>0.8945</td><td>0.6060</td><td>0.5360</td><td>0.1009</td><td><span class="pill p-arch">A</span></td></tr>
+              <tr><td class="rank">20</td><td class="rowlab">dinov2 ViT-S/14</td><td>dinov2/completo</td><td>0.4426</td><td>0.4668</td><td>0.4431</td><td>0.2173</td><td>—</td><td><span class="pill p-camp">C</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note warn">
+          <b>The top row carries the leakage signature.</b> <code>run4_1</code>'s validation loss is
+          <span class="num">0.0003</span> — the exact value that <a href="#e4">E4</a> proved means
+          clip-grouped validation is not measuring generalization. Its 0.9453 is a real number on a
+          real held-out test set, but the run that produced it was early-stopped against a
+          validation set that shares corridors with its training data. Contrast row 7,
+          <code>dia_validacao/baseline</code>, whose validation loss of
+          <span class="num">0.2750</span> is what an honest split costs to report.
+        </div>
+
+        <div class="scroller">
+          <table>
+            <caption>Best and worst per architecture. The within-architecture range is wider than the between-architecture range for every family.</caption>
+            <thead><tr><th scope="col">Architecture</th><th scope="col">Runs</th><th scope="col">Best</th><th scope="col">Worst</th><th scope="col">Range</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlab">mobilenetv1</td><td>3</td><td class="best">0.9453</td><td>0.7746</td><td class="neg">0.171</td></tr>
+              <tr><td class="rowlab">mobilenetv4</td><td>9</td><td>0.9355</td><td>0.5861</td><td class="neg">0.349</td></tr>
+              <tr><td class="rowlab">dinov2 ViT-S/14</td><td>3</td><td>0.8965</td><td>0.4426</td><td class="neg">0.454</td></tr>
+              <tr><td class="rowlab">resnet50</td><td>2</td><td>0.8690</td><td>0.5678</td><td class="neg">0.301</td></tr>
+              <tr><td class="rowlab">efficientnet_b0</td><td>2</td><td>0.8275</td><td>0.7013</td><td class="neg">0.126</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:1rem">
+          The best four architectures land within <span class="num">0.118</span> of one another
+          while individual families span up to <span class="num">0.454</span> internally. On this
+          evidence <b>architecture choice is not what drives the result</b> — the training regime,
+          the data variant and where early stopping fires all matter more. That is a finding, not
+          a disappointment: it means effort is better spent on the split and the labels than on the
+          backbone.
+        </p>
+      </article>
+    </section>
+
+    <!-- ============ SERIES A ============ -->
+    <section id="series-a">
+      <div class="series-head">
+        <h2 class="series"><em>Series A</em> Provenance audits</h2>
+        <p>
+          Before any model was trained, three questions about the existing numbers had to be
+          settled: where the paper's split table comes from, why the trainers report more rows
+          than they have frames, and whether the labels on Drive are correct. All three were
+          read out of the code and reproduced against archived run artifacts.
+        </p>
+      </div>
+
+      <article class="rec" id="a1">
+        <div class="rec-head">
+          <span class="rec-id">A1</span>
+          <h3>Where the paper's split table actually comes from</h3>
+          <span class="verdict v-refuted">Discrepancy found</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Traced the Train / Validation / Test triple printed in the WiP paper back through the training scripts to the three Kaggle inputs, then rebuilt it locally.</dd>
+          <dt>Why</dt>
+          <dd>A split table is the first thing a reviewer checks. It had to be reproducible from an archived artifact, not from memory.</dd>
+          <dt>How</dt>
+          <dd>Read <code>load_allframe_rows()</code>, <code>grouped_split()</code> and <code>make_head_balanced_rows()</code>; replayed the pipeline and compared every field against <code>anamariabarrosnonato/ss2ere → sibgrapi/run4/final_statistics1.txt</code>.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            The pool is <span class="num">52,719</span> frames over <span class="num">608</span> clips
+            (dataset8 <span class="num">22,781</span> + dataset9 <span class="num">814</span> +
+            auto-trim <span class="num">29,124</span>). Test is <span class="num">3,970</span>, natural
+            and unreduced. <strong>The paper's table mixes two different quantities</strong> — Train
+            and Validation are post-reduction row counts, Test is the raw split. And the printed
+            triple (<span class="num">33,188 / 6,102 / 3,970</span>) matches no archived run: run4
+            reads <span class="num">33,118 / 6,172 / 3,970</span>, same policy and pool, a different
+            clip draw.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="a2">
+        <div class="rec-head">
+          <span class="rec-id">A2</span>
+          <h3>Why 24,347 frames are reported as 33,118 rows</h3>
+          <span class="verdict v-confirmed">Explained</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Established what one "training sample" is when the two heads are balanced independently.</dd>
+          <dt>Why</dt>
+          <dd>Without this the split counts cannot be interpreted, and no materialized one-image-per-frame dataset can reproduce them.</dd>
+          <dt>How</dt>
+          <dd>Read the reduction and masked-loss code, then counted per-head membership for every frame in run4's split.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            A single class balance cannot serve both heads, because <code>free_path</code> is always
+            <code>none</code>. So the balance runs twice, and a frame kept by both is emitted as
+            <strong>two rows</strong>: <span class="num">8,771</span> × 2 +
+            <span class="num">10,293</span> + <span class="num">5,283</span> =
+            <span class="num">33,118</span>, over <span class="num">24,347</span> distinct frames.
+            Labels are identical on both copies; only which head's loss the row feeds differs.
+            Duplicated frames get twice the backbone exposure per epoch, four times after the flip.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="a3">
+        <div class="rec-head">
+          <span class="rec-id">A3</span>
+          <h3>A non-unique join key silently relabels 4,537 frames</h3>
+          <span class="verdict v-refuted">Bug confirmed</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Audited how the two trainer families pair the <code>obstacle_freepath</code> and <code>deviation_lrn</code> manifests.</dd>
+          <dt>Why</dt>
+          <dd>Cross-checking the Drive <code>sense</code> dataset against the run statistics turned up deviation counts that did not match.</dd>
+          <dt>How</dt>
+          <dd>Replayed both join keys over <code>deviation_lrn/labels.csv</code> (<span class="num">24,847</span> rows) and compared the resulting class totals.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <code>_pair_task_dirs()</code> joins on <code>(source_clip, filename)</code>, which is
+            unique. <code>read_lateral_labels()</code> in the ConvLSTM datagen joins on
+            <code>(source_clip, frame_index)</code>, which is <strong>not</strong> — the builder
+            strips the <code>_head</code>/<code>_tail</code> suffix on purpose, so a cut frame and an
+            endpoint frame of the same recording collide. Last-wins relabels
+            <strong><span class="num">2,267</span> left and <span class="num">2,270</span> right
+            frames as <code>none</code></strong>. Endpoint frames carry no day-22 or day-24 clips, so
+            the test split is clean — but <code>sense/treino/labels.txt</code> on Drive is affected,
+            and so is everything downstream of it (see <a href="#b3">B3</a>).
+          </dd>
+        </dl>
+      </article>
+    </section>
+
+    <!-- ============ SERIES B ============ -->
+    <section id="series-b">
+      <div class="series-head">
+        <h2 class="series"><em>Series B</em> The run archive</h2>
+        <p>
+          Results predating this campaign, recovered from
+          <code>Desktop\sibgrapi\</code> and its copy under
+          <code>sense_run4_experiments\referencia\</code>. This is where the mobilenetv1,
+          resnet50 and efficientnet_b0 numbers live — and where three things needed
+          correcting before they could be used.
+        </p>
+      </div>
+
+      <article class="rec" id="b1">
+        <div class="rec-head">
+          <span class="rec-id">B1</span>
+          <h3>Sixteen files, nine runs</h3>
+          <span class="verdict v-refuted">De-duplicated</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Catalogued <code>sibgrapi_run_stats/run{1..4}_{0..3}.txt</code> — nominally four runs × four architectures — and checked whether they are distinct.</dd>
+          <dt>Why</dt>
+          <dd>The naming implies four independent seeds per architecture, which would support a mean and a variance. If true, that is exactly what the paper needs.</dd>
+          <dt>How</dt>
+          <dd>Hashed all sixteen files and grouped by content.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>Only nine are unique.</strong> <code>run2_0 = run3_0 = run4_0</code>,
+            <code>run2_2 = run3_2 = run4_2</code>, <code>run2_3 = run3_3 = run4_3</code> and
+            <code>run2_1 = run3_1</code> — re-archived copies, not repeated runs. That leaves three
+            mobilenetv1 results and two each for the others. <strong>No variance claim can be made
+            from this archive</strong>, and any mean over "four runs" is a mean over duplicates.
+          </dd>
+        </dl>
+        <div class="note warn">
+          <b>This corrects a number that was briefly reported.</b> A first pass over these files
+          computed a per-architecture mean ± standard deviation across all sixteen. Those figures
+          treated duplicates as independent samples and are void. The leaderboard above uses the
+          nine de-duplicated runs only.
+        </div>
+      </article>
+
+      <article class="rec" id="b2">
+        <div class="rec-head">
+          <span class="rec-id">B2</span>
+          <h3>Four CNN architectures on the common test set</h3>
+          <span class="verdict v-confirmed">Backbone is not the driver</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Extracted the <code>test</code> block from each of the nine unique runs: efficientnet_b0, mobilenetv1, mobilenetv4 and resnet50, all two-head, all under the per-head masking regime.</dd>
+          <dt>Why</dt>
+          <dd>To answer the architecture question directly, and to place the campaign's mobilenetv4 and dinov2 results in a wider field than they had.</dd>
+          <dt>How</dt>
+          <dd>Confirmed each run's test block sums to <span class="num">3,970</span> with the exact class composition of §0.1, then merged into the leaderboard.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            Best per family: mobilenetv1 <span class="num">0.9453</span>, mobilenetv4
+            <span class="num">0.9355</span>, resnet50 <span class="num">0.8690</span>,
+            efficientnet_b0 <span class="num">0.8275</span>. But <strong>every family's internal
+            range exceeds the gap between families</strong> — resnet50 alone spans
+            <span class="num">0.5678</span> to <span class="num">0.8690</span>. The backbone is not
+            what determines the outcome here; the regime and the split are.
+          </dd>
+        </dl>
+        <div class="note">
+          <b>A revealing pattern in the weakest runs.</b> <code>run1_3</code> (resnet50) scores
+          <span class="num">0.8945</span> on the obstacle head but <span class="num">0.6060</span> on
+          deviation, for a joint of <span class="num">0.5678</span>. <code>run1_2</code> (mobilenetv4)
+          is the same shape: obstacle <span class="num">0.9668</span>, deviation
+          <span class="num">0.7884</span>. Across the whole archive the obstacle head is
+          near-saturated and stable, and <b>essentially all the variance lives in the deviation
+          head</b> — which is the harder, rarer, and more label-noise-prone task. Joint accuracy is
+          therefore very nearly a measurement of the deviation head alone.
+        </div>
+      </article>
+
+      <article class="rec" id="b3">
+        <div class="rec-head">
+          <span class="rec-id">B3</span>
+          <h3>Random-frame splits inflate accuracy by six points</h3>
+          <span class="verdict v-refuted">Leakage measured</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>A separate family of runs in <code>sibgrapi\mobilenetv4\</code>: mobilenetv4 trained under two split strategies — <code>random_frames</code> (frames shuffled into train/val/test) and <code>random_clips</code> (whole clips assigned) — five seeds each, scored by route accuracy at 30 and 10 FPS.</dd>
+          <dt>Why</dt>
+          <dd>This is the frame-level-versus-clip-level split question the paper raises, run as a controlled experiment with real repeated seeds — the only place in the whole archive where variance is genuinely measurable.</dd>
+          <dt>How</dt>
+          <dd><code>final_route_accuracy30fps.json</code> and <code>...10fps.json</code>, decoding both heads into <code>forward</code> / <code>left</code> / <code>right</code> / <code>stop</code>.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            At 30 FPS, shuffling frames scores <strong><span class="num">0.9647</span> ± 0.0040</strong>
+            against <strong><span class="num">0.9049</span> ± 0.0271</strong> for splitting by clip —
+            <strong>six points of pure leakage</strong>, and a standard deviation almost seven times
+            smaller. Frame-level splitting does not merely inflate the score; it also
+            <em>manufactures apparent stability</em>, because adjacent near-duplicate frames land on
+            both sides of the split.
+          </dd>
+        </dl>
+        <div class="scroller">
+          <table>
+            <caption>Route accuracy, five seeds per cell. The 10 FPS row is the mechanism check: subsample away the near-duplicates and most of the gap closes.</caption>
+            <thead>
+              <tr><th scope="col">Rate</th><th scope="col">random_frames</th><th scope="col">random_clips</th><th scope="col">Gap</th><th scope="col">σ ratio</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="rowlab">30 FPS</td><td class="neg">0.9647 ±0.0040</td><td class="pos">0.9049 ±0.0271</td><td class="neg">6.0 pts</td><td>6.8×</td></tr>
+              <tr><td class="rowlab">10 FPS</td><td class="neg">0.9505 ±0.0076</td><td class="pos">0.9377 ±0.0185</td><td>1.3 pts</td><td>2.4×</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:1rem">
+          The 10 FPS row is the part that makes this conclusive rather than merely suggestive. If the
+          six-point gap were a real difficulty difference between the two split types, thinning the
+          frames would not touch it. Instead the gap collapses to 1.3 points — <b>exactly what the
+          near-duplicate-leakage explanation predicts</b>, since subsampling is precisely the removal
+          of the frames that leak.
+        </p>
+        <div class="note warn">
+          <b>These runs sit on the A3 bug.</b> Their <code>dataset_used_dir</code> is
+          <code>convlstm_mobilenetv1_all_frames/dataset_used</code> — output of the datagen with the
+          non-unique join, so roughly 4,537 lateral frames in the training pool are mislabelled
+          <code>none</code>. And their test sets are their own random draws
+          (<span class="num">6,781</span> and <span class="num">3,062</span> frames), <b>not</b> the
+          common 3,970. That is why none of these rows appear in the leaderboard. The
+          frames-versus-clips <em>comparison</em> survives both problems, because each side is
+          affected identically.
+        </div>
+      </article>
+
+      <article class="rec" id="b4">
+        <div class="rec-head">
+          <span class="rec-id">B4</span>
+          <h3>ConvLSTM: a data generator, not a scored model</h3>
+          <span class="verdict v-open">No result exists</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt>
+          <dd>Searched every archive for a ConvLSTM result on the common test set.</dd>
+          <dt>Why</dt>
+          <dd>ConvLSTM appears throughout the scripts and the wiki, so it reads like a tested architecture. It is worth knowing whether it ever produced a comparable number.</dd>
+          <dt>How</dt>
+          <dd>Grepped every JSON and statistics file on the Desktop and under <code>data/</code> for ConvLSTM results and for test blocks sized 3,970.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>None exists.</strong> <code>convlstm_mobilenetv1_all_frames.py</code> is a
+            <em>data generator</em> — the one carrying the A3 join bug — whose
+            <code>dataset_used/</code> output feeds other trainers; that is the only sense in which
+            "ConvLSTM" appears in the results. A separate <code>train_convlstm_classifier.py</code>
+            exists in <code>scripts/</code> but has produced no archived run. <b>ConvLSTM is
+            untested on this task</b>, and any claim about it in the paper would be unsupported.
+          </dd>
+        </dl>
+      </article>
+    </section>
+
+    <!-- ============ SERIES D ============ -->
+    <section id="series-d">
+      <div class="series-head">
+        <h2 class="series"><em>Series D</em> Dataset construction</h2>
+        <p>
+          Five datasets, all materialized at 224×224 in the Drive <code>sense</code> file tree and
+          label style, all carrying a <code>proveniencia.csv</code> mapping each sequential filename
+          back to its clip, frame and source video — the sequential renaming would otherwise destroy
+          provenance.
+        </p>
+      </div>
+
+      <article class="rec" id="d1">
+        <div class="rec-head">
+          <span class="rec-id">D1</span>
+          <h3>Bit-exact reproduction of run4</h3>
+          <span class="verdict v-built">33,118 / 6,172 / 3,970</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>Rebuilt run4's MobileNetV1 split as real image folders outside the repo.</dd>
+          <dt>Why</dt><dd>Every later experiment needed a fixed, inspectable reference partition rather than a seed that has to be guessed.</dd>
+          <dt>How</dt><dd>Replayed the A1 pipeline, taking the validation clip set from the archived run's own <code>background_reduction</code> clip lists instead of re-drawing it.</dd>
+          <dt>Conclusion</dt><dd class="concl">Every field matches. Because the partition is the run's own, later variants are comparable to the published numbers rather than to a fresh draw.</dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="d2">
+        <div class="rec-head">
+          <span class="rec-id">D2</span>
+          <h3>Distinct frames, one image per frame</h3>
+          <span class="verdict v-built">24,347 train</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>The same split with each source frame appearing exactly once, carrying both labels.</dd>
+          <dt>Why</dt><dd>The A2 duplication is an artifact of loss masking, not of the data. Dropping it makes "one row = one image" true again.</dd>
+          <dt>How</dt><dd>Collapsed the duplicated rows; <code>proveniencia.csv</code> gains a <code>cabecas</code> column recording which heads had kept each frame.</dd>
+          <dt>Conclusion</dt><dd class="concl">This became the <b>baseline</b> configuration for every training run in Series E.</dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="d3">
+        <div class="rec-head">
+          <span class="rec-id">D3</span>
+          <h3>Distinct frames plus mirrored copies</h3>
+          <span class="verdict v-built">48,694 train</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>D2 with a horizontally flipped copy of every training frame, <code>left ⇄ right</code> swapped.</dd>
+          <dt>Why</dt><dd>To materialize on disk the augmentation the trainers apply in memory, so it can be inspected and reused.</dd>
+          <dt>How</dt><dd><code>aplicar_flip.py</code> ships inside the folder and regenerates the effective training set on demand.</dd>
+          <dt>Conclusion</dt><dd class="concl">Used as a materialization aid; the Series E runs apply the flip deterministically at train time instead.</dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="d4">
+        <div class="rec-head">
+          <span class="rec-id">D4</span>
+          <h3>Deviation windows extended 0.5 s past the cut</h3>
+          <span class="verdict v-built">10,047 / 1,930 / 2,706</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>For every clip labelled <code>left</code> or <code>right</code>, the window <code>[start, end + 0.5 s]</code> decoded from the original recording — a 1.0 s cut becomes 1.5 s — with every frame kept.</dd>
+          <dt>Why</dt><dd>The cut ends where the annotator stopped it, but the manoeuvre is still visually legible just after. The question was whether those frames carry usable signal.</dd>
+          <dt>How</dt><dd>Resolved <span class="num">327</span> of <span class="num">328</span> clips: <span class="num">301</span> from <code>cut_info.json</code>, <span class="num">24</span> from <code>history.json</code> plus the July-24 provenance, and <span class="num">3</span> recovered by matching the export's first frame against its source recording — validated to −0.010…−0.024 s, under one frame at 30 fps.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            Built and used as the <b>uniao</b> configuration, with a known caveat:
+            <span class="num">899</span> of its <span class="num">2,706</span> test frames are flagged
+            <code>pos_corte=1</code>, where the manoeuvre is over but the label still says
+            <code>left</code>/<code>right</code>. D5 and V2 exist to measure that caveat.
+          </dd>
+        </dl>
+        <figure class="win">
+          <svg viewBox="0 0 340 54" role="img" aria-label="A 1.0 second cut followed by a 0.5 second tail of about 15 frames">
+            <rect x="10" y="14" width="200" height="17" fill="var(--ink)"></rect>
+            <rect x="210" y="14" width="100" height="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"></rect>
+            <line x1="210" y1="8" x2="210" y2="38" stroke="var(--accent)" stroke-width="1.5"></line>
+            <text class="win-lab" x="12" y="45" fill="var(--ink-soft)">CUT · annotated manoeuvre</text>
+            <text class="win-lab" x="213" y="45" fill="var(--accent)">TAIL · ~15 frames</text>
+            <text class="win-lab" x="213" y="10" fill="var(--accent)">end</text>
+          </svg>
+          <figcaption>D4's window. The tail is defined in seconds, so its length in frames depends on each recording's frame rate.</figcaption>
+        </figure>
+      </article>
+
+      <article class="rec" id="d5">
+        <div class="rec-head">
+          <span class="rec-id">D5</span>
+          <h3>Deviation windows extended exactly 10 frames</h3>
+          <span class="verdict v-built">8,957 / 1,720 / 2,407</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>D4 rebuilt with the tail counted in decoded frames rather than seconds: <code>[start, end]</code> plus the next 10 frames.</dd>
+          <dt>Why</dt><dd>Two reasons. A frame-counted tail is exact and independent of frame rate, where 0.5 s was ~15 frames at 30 fps. And a shorter tail should contain fewer of the mislabelled frames D4 flagged.</dd>
+          <dt>How</dt><dd>The decode loop gates on a per-clip post-cut counter instead of a timestamp. The frame-matching recovery of the three July-24 clips was ported as well, so both datasets cover the same 60 test clips.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <span class="num">13,084</span> frames over <span class="num">327</span> clips, with
+            <strong>exactly 10 post-cut frames per clip</strong> and zero short tails
+            (224 × 10, 43 × 10, 60 × 10). Scored in V2.
+          </dd>
+        </dl>
+        <figure class="win">
+          <svg viewBox="0 0 340 54" role="img" aria-label="The same 1.0 second cut followed by a shorter tail of exactly 10 frames">
+            <rect x="10" y="14" width="200" height="17" fill="var(--ink)"></rect>
+            <rect x="210" y="14" width="67" height="17" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1"></rect>
+            <rect x="277" y="14" width="33" height="17" fill="none" stroke="var(--rule)" stroke-width="1" stroke-dasharray="2 2"></rect>
+            <line x1="210" y1="8" x2="210" y2="38" stroke="var(--accent)" stroke-width="1.5"></line>
+            <text class="win-lab" x="12" y="45" fill="var(--ink-soft)">CUT · unchanged, same frames</text>
+            <text class="win-lab" x="213" y="45" fill="var(--accent)">10 frames</text>
+            <text class="win-lab" x="280" y="45" fill="var(--ink-soft)">dropped</text>
+          </svg>
+          <figcaption>D5's window. The dashed segment — frames 11–15 — is what the change removes, and is precisely what V2 isolates.</figcaption>
+        </figure>
+      </article>
+    </section>
+
+    <!-- ============ SERIES E ============ -->
+    <section id="series-e">
+      <div class="series-head">
+        <h2 class="series"><em>Series E</em> Campaign training runs</h2>
+        <p>
+          Eleven models on Kaggle GPU. Every run uses run4's configuration — 224×224, batch 32,
+          AdamW <code>lr 1e-4 / wd 1e-4</code>, <code>ReduceLROnPlateau</code>, fp16 AMP, 40 epochs,
+          early-stop patience 6, best state by validation loss, seed 43, deterministic horizontal
+          flip on train only — with exactly one deliberate change per experiment. Per-head masking
+          is dropped throughout: every frame carries both labels and trains both heads.
+        </p>
+      </div>
+
+      <article class="rec" id="e1">
+        <div class="rec-head">
+          <span class="rec-id">E1</span><h3>Full rate — the reference pair</h3>
+          <span class="verdict v-confirmed">Best campaign CNN</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>MobileNetV4 <code>conv_small</code>, two configurations: <b>baseline</b> (D2, 24,347 train) and <b>uniao</b> (D2 + D4, 34,394 train).</dd>
+          <dt>Why</dt><dd>To establish the reference against which every subsampling variant is measured, and to test whether the extended windows help.</dd>
+          <dt>How</dt><dd>Kernel <code>sensecv-mobilenetv4-two-head</code>, nothing else changed.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong><code>full_rate/uniao</code> leads every campaign CNN view</strong> — joint
+            <span class="num">0.9156</span> against <span class="num">0.8806</span> for baseline, and
+            the best obstacle accuracy of any model anywhere (<span class="num">0.9746</span>). But
+            see E4: that advantage is measured under a validation split that is not measuring
+            generalization.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="e2">
+        <div class="rec-head">
+          <span class="rec-id">E2</span><h3>5 FPS subsampling</h3>
+          <span class="verdict v-refuted">Costs accuracy</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>Every split subsampled from 30 to 5 FPS, both configurations.</dd>
+          <dt>Why</dt><dd>Consecutive frames at 30 FPS are near-duplicates. If a 6× smaller dataset trains as well, every future collection and training run gets cheaper.</dd>
+          <dt>How</dt><dd>Kernel <code>sensecv-mobilenetv4-5-fps</code>, per-clip even subsampling on train, validation and test alike.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            It costs accuracy: baseline falls to <span class="num">0.8103</span>. And
+            <code>fps5/uniao</code> <strong>collapsed outright</strong> to
+            <span class="num">0.5861</span>, best epoch 2 of 8 — early stopping fired before the
+            deviation head converged on a training set four times smaller. E5 later showed this was
+            an optimization failure, not a limit of the data.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="e3">
+        <div class="rec-head">
+          <span class="rec-id">E3</span><h3>DINOv2 cosine selection at 0.98</h3>
+          <span class="verdict v-refuted">Worse than 5 FPS</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>Frames selected per clip by DINOv2 ViT-S/14 cosine distance, keeping a frame only when it differs from the last kept one by more than the 0.98 threshold.</dd>
+          <dt>Why</dt><dd>A content-aware alternative to fixed-rate subsampling — in principle it should drop redundancy more intelligently than a clock does.</dd>
+          <dt>How</dt><dd>Kernel <code>sensecv-mobilenetv4-dinov2-0-98</code>, selection applied to every split.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>Worse than 5 FPS despite keeping nearly twice as many frames</strong>
+            (<span class="num">11,057</span> vs <span class="num">6,237</span>): baseline
+            <span class="num">0.7307</span>. Selection removes the most redundant frames, which are
+            the clear <code>none</code> ones — starving the majority class the model calibrates
+            against. A second finding fell out of it: <strong>the selection is not a per-frame
+            property.</strong> The same threshold keeps <span class="num">953</span> frames over the
+            distinct set but <span class="num">1,382</span> of those same frames when the janela
+            frames are in the pool, because the greedy rule compares against the last kept frame. Any
+            "DINOv2-selected dataset" must state the pool it was selected from.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="e4">
+        <div class="rec-head">
+          <span class="rec-id">E4</span><h3>Held-out-day validation</h3>
+          <span class="verdict v-refuted">Leakage confirmed</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>Validation replaced by an entire collection day, 21-06-2026, instead of a clip-grouped draw from the same pool.</dd>
+          <dt>Why</dt><dd>Clip-grouped validation was returning a validation loss of <span class="num">0.0003</span>, which is not a plausible number for this task. The suspicion was that validation clips share corridors and sessions with training clips.</dd>
+          <dt>How</dt><dd>Kernel <code>sensecv-mobilenetv4-held-out-day-validation</code>. 21-06-2026 was chosen because it is the only day with real support for all four label combinations (<span class="num">3,913</span> frames, 9.6% of the pool); every other candidate is deviation-only or clear-only.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>The single most important result of the campaign.</strong> Validation loss is
+            <span class="num">0.275</span> for baseline and <span class="num">1.186</span> for uniao,
+            against <span class="num">0.0003</span> clip-grouped — roughly a thousand times higher on
+            the same task. And the consequence is direct: <strong>the union's advantage does not
+            survive the honest split</strong> — <code>dia_validacao/uniao</code>
+            (<span class="num">0.7856</span>) falls <em>below</em> <code>dia_validacao/baseline</code>
+            (<span class="num">0.8710</span>), reversing E1's ordering.
+          </dd>
+        </dl>
+        <div class="note">
+          <b>Two independent measurements of the same phenomenon.</b> E4 varies the
+          <em>validation</em> split and finds a 1000× loss difference; <a href="#b3">B3</a> varies
+          the <em>test</em> split across five seeds and finds six points of route accuracy. Different
+          data, different metric, different year — same conclusion. Together they are a far stronger
+          argument for the paper than either alone.
+        </div>
+      </article>
+
+      <article class="rec" id="e5">
+        <div class="rec-head">
+          <span class="rec-id">E5</span><h3>DINOv2 fine-tuning ladder</h3>
+          <span class="verdict v-confirmed">Best on the janela sets</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>DINOv2 ViT-S/14 two-head on exactly E2's <code>fps5/uniao</code> data path, at three unfreezing depths: <code>ultimos1</code> (1.78 M trainable, 8.1%), <code>ultimos2</code> (3.55 M, 16.1%) and <code>completo</code> (22.06 M, 100%).</dd>
+          <dt>Why</dt><dd>To separate backbone capacity from data volume. Since only the backbone and what is unfrozen change, the comparison against E2's MobileNetV4 is clean.</dd>
+          <dt>How</dt><dd>Kernels <code>sensecv-dinov2-5-fps-uniao</code> and <code>sensecv-dinov2-5-fps-uniao-last-1</code>, run4's configuration throughout.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>Unfreezing one block is enough, and a second does not help.</strong>
+            <code>ultimos1</code> beats <code>ultimos2</code> with half the trainable parameters, and
+            it <strong>rescues E2's collapse</strong> — <span class="num">0.8965</span> against
+            MobileNetV4's <span class="num">0.5861</span> on identical data, training on
+            <span class="num">8,029</span> frames instead of <span class="num">34,394</span>.
+            <code>completo</code> scored <span class="num">0.4426</span> but did <em>not</em> diverge:
+            train loss fell monotonically and validation deviation F1 was still rising when patience
+            ran out. <code>lr 1e-4</code> is roughly 10× too high for a full ViT-S fine-tune. The
+            available conclusion is "full fine-tuning does not converge at run4's learning rate",
+            not "full fine-tuning is worse".
+          </dd>
+        </dl>
+        <div class="note">
+          <b>Error structure differs by backbone.</b> The MobileNetV4 models essentially never invert
+          direction — their errors are a fallback to <code>none</code>. DINOv2 <code>ultimos2</code>
+          makes genuine inversions (77 left→right). <code>ultimos1</code> is better behaved: 11 and 4.
+          For assistive navigation the distinction is not cosmetic — a <code>none</code> fallback is
+          silent, an inversion steers the person the wrong way.
+        </div>
+      </article>
+    </section>
+
+    <!-- ============ SERIES V ============ -->
+    <section id="series-v">
+      <div class="series-head">
+        <h2 class="series"><em>Series V</em> Evaluation</h2>
+        <p>
+          Two scoring passes over the campaign checkpoints. In both, each model predicts once over
+          the union of all unique frames and every test view is a subset of those predictions, so
+          the views are mutually consistent by construction.
+        </p>
+      </div>
+
+      <article class="rec" id="v1">
+        <div class="rec-head">
+          <span class="rec-id">V1</span><h3>Six test sets against eight models</h3>
+          <span class="verdict v-confirmed">Ranking is stable</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>Every MobileNetV4 checkpoint scored on six views: the distinct test set, its 5 FPS subsample and its DINOv2-selected subset, each with and without the janela frames added.</dd>
+          <dt>Why</dt><dd>To find out how much a reported accuracy depends on the choice of test set — and therefore how much a single quoted number is worth.</dd>
+          <dt>How</dt><dd><code>eval_sense_matrix.py</code>, one prediction pass per model over 6,676 unique frames.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            <strong>Absolute scores move by up to 15 points with the test set; the ranking barely
+            changes.</strong> A number quoted without naming its test set is meaningless, but a
+            comparison between models is robust. Two corollaries: the 5 FPS view ranks models
+            identically to the full set (within 0.005 for every model), so it is a safe cheap proxy —
+            while the DINOv2 view shifts scores 3–6 points and reorders pairs, so it is not.
+          </dd>
+        </dl>
+      </article>
+
+      <article class="rec" id="v2">
+        <div class="rec-head">
+          <span class="rec-id">V2</span><h3>Does a shorter tail carry cleaner labels?</h3>
+          <span class="verdict v-confirmed">Yes — 10 beats 15</span>
+        </div>
+        <dl class="qa">
+          <dt>What</dt><dd>All eleven checkpoints scored on nine views spanning both janela datasets, including the pre-cut and post-cut halves of each in isolation.</dd>
+          <dt>Why</dt><dd>D4's post-cut frames are labelled by assumption, not observation. Splitting the metric separates model error from the labelling assumption — and settles whether 10 frames is a better cut-off than 0.5 s.</dd>
+          <dt>How</dt><dd><code>eval_sense_janela10.py</code>, one prediction pass per model over 9,083 unique frames, importing V1's metric definitions so the numbers stay comparable.</dd>
+          <dt>Conclusion</dt>
+          <dd class="concl">
+            The design check passed exactly: <strong>the 1,807 pre-cut frames score identically in
+            both datasets for all eleven models</strong>, to four decimals — proof the two differ only
+            in the tail. And on the tail itself, <strong>frames 11–15 are measurably worse labelled
+            than frames 1–10</strong> for 8 of 11 models, mean drop <span class="num">1.4</span>
+            points. The three exceptions are the three weakest models, which fail across the whole
+            tail. <strong>10 frames is the better cut-off.</strong>
+          </dd>
+        </dl>
+        <div class="scroller">
+          <table>
+            <caption>Accuracy on the tail only, split at frame 10. Frames 11–15 are exactly the frames D5 removes.</caption>
+            <thead>
+              <tr><th scope="col">Model</th><th scope="col">Frames 1–10</th><th scope="col">Frames 11–15</th><th scope="col">Drop</th></tr>
+            </thead>
+            <tbody>
+              <tr><td class="rowlab">dinov2/ultimos1</td><td class="best">0.9683</td><td>0.9398</td><td class="pos">+0.029</td></tr>
+              <tr><td class="rowlab">dinov2/ultimos2</td><td>0.9150</td><td>0.8930</td><td class="pos">+0.022</td></tr>
+              <tr><td class="rowlab">full_rate/uniao</td><td>0.8467</td><td>0.8127</td><td class="pos">+0.034</td></tr>
+              <tr><td class="rowlab">fps5/baseline</td><td>0.8000</td><td>0.7993</td><td class="pos">+0.001</td></tr>
+              <tr><td class="rowlab">dia_validacao/baseline</td><td>0.7317</td><td>0.6589</td><td class="pos">+0.073</td></tr>
+              <tr><td class="rowlab">dino098/uniao</td><td>0.6783</td><td>0.7090</td><td class="neg">−0.031</td></tr>
+              <tr><td class="rowlab">full_rate/baseline</td><td>0.6450</td><td>0.6120</td><td class="pos">+0.033</td></tr>
+              <tr><td class="rowlab">fps5/uniao</td><td>0.4867</td><td>0.5050</td><td class="neg">−0.018</td></tr>
+              <tr><td class="rowlab">dia_validacao/uniao</td><td>0.4717</td><td>0.4415</td><td class="pos">+0.030</td></tr>
+              <tr><td class="rowlab">dino098/baseline</td><td>0.4000</td><td>0.4247</td><td class="neg">−0.025</td></tr>
+              <tr><td class="rowlab">dinov2/completo</td><td>0.0133</td><td>0.0033</td><td class="pos">+0.010</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <b>Read the tail columns, not the union columns.</b> The two unions contain different
+          numbers of frames (6,676 against 6,377), so their averages shift for mechanical reasons.
+          DINOv2 <code>ultimos1</code> looks marginally worse on the shorter union
+          (<span class="num">0.9186</span> against <span class="num">0.9196</span>) only because
+          janela frames are <em>easier</em> than the distinct test set for that model, so having
+          fewer of them drags the mean down.
+        </div>
+      </article>
+
+      <article class="rec" id="v3">
+        <div class="rec-head">
+          <span class="rec-id">V3</span><h3>Full janela table, eleven models across nine views</h3>
+          <span class="verdict v-built">Joint accuracy</span>
+        </div>
+        <div class="scroller">
+          <table>
+            <caption>
+              <b>D</b> distinct test (3,970) · <b>J15</b> janela with a 0.5 s tail (2,706) ·
+              <b>J10</b> janela with a 10-frame tail (2,407) · <b>post</b> is each janela set's tail ·
+              <b>pre</b> is the cut portion, identical in both · <b>U</b> the unions with D.
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Model</th><th scope="col">D</th><th scope="col">J15</th>
+                <th scope="col">J15 post</th><th scope="col">J10</th><th scope="col">J10 post</th>
+                <th scope="col">pre (both)</th><th scope="col">U15</th><th scope="col">U10</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td class="rowlab">dinov2/ultimos1</td><td>0.8965</td><td>0.9534</td><td>0.9588</td><td class="best">0.9551</td><td class="best">0.9683</td><td>0.9507</td><td class="best">0.9196</td><td class="best">0.9186</td></tr>
+              <tr><td class="rowlab">dinov2/ultimos2</td><td>0.8856</td><td>0.8803</td><td>0.9077</td><td>0.8787</td><td>0.9150</td><td>0.8666</td><td>0.8835</td><td>0.8830</td></tr>
+              <tr><td class="rowlab">full_rate/uniao</td><td class="best">0.9156</td><td>0.7801</td><td>0.8354</td><td>0.7761</td><td>0.8467</td><td>0.7526</td><td>0.8607</td><td>0.8629</td></tr>
+              <tr><td class="rowlab">fps5/baseline</td><td>0.8103</td><td>0.7639</td><td>0.7998</td><td>0.7595</td><td>0.8000</td><td>0.7460</td><td>0.7915</td><td>0.7911</td></tr>
+              <tr><td class="rowlab">full_rate/baseline</td><td>0.8806</td><td>0.6748</td><td>0.6340</td><td>0.6826</td><td>0.6450</td><td>0.6951</td><td>0.7972</td><td>0.8059</td></tr>
+              <tr><td class="rowlab">dia_validacao/baseline</td><td>0.8710</td><td>0.6722</td><td>0.7075</td><td>0.6739</td><td>0.7317</td><td>0.6547</td><td>0.7904</td><td>0.7966</td></tr>
+              <tr><td class="rowlab">dino098/uniao</td><td>0.8068</td><td>0.6231</td><td>0.6885</td><td>0.6124</td><td>0.6783</td><td>0.5905</td><td>0.7323</td><td>0.7334</td></tr>
+              <tr><td class="rowlab">dia_validacao/uniao</td><td>0.7856</td><td>0.5048</td><td>0.4616</td><td>0.5127</td><td>0.4717</td><td>0.5263</td><td>0.6718</td><td>0.6826</td></tr>
+              <tr><td class="rowlab">fps5/uniao</td><td>0.5861</td><td>0.4364</td><td>0.4928</td><td>0.4279</td><td>0.4867</td><td>0.4084</td><td>0.5255</td><td>0.5264</td></tr>
+              <tr><td class="rowlab">dino098/baseline</td><td>0.7307</td><td>0.3814</td><td>0.4082</td><td>0.3760</td><td>0.4000</td><td>0.3680</td><td>0.5891</td><td>0.5968</td></tr>
+              <tr><td class="rowlab">dinov2/completo</td><td>0.4426</td><td>0.0122</td><td>0.0100</td><td>0.0133</td><td>0.0133</td><td>0.0133</td><td>0.2681</td><td>0.2805</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="margin-top:1rem">
+          The <b>pre (both)</b> column is a single number per model because the pre-cut half is
+          identical in the two datasets — the correctness check that validates every other
+          comparison in this table.
+        </p>
+      </article>
+    </section>
+
+    <!-- ============ OUTCOME ============ -->
+    <section id="findings">
+      <div class="series-head">
+        <h2 class="series"><em>Outcome</em> What carries to the paper</h2>
+      </div>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">1</span><h3>Split leakage, measured two independent ways</h3></div>
+        <p>
+          Vary the <em>validation</em> split and loss goes from <span class="num">0.0003</span>
+          clip-grouped to <span class="num">0.275</span> on a genuinely held-out day — roughly a
+          thousandfold. Vary the <em>test</em> split across five seeds and route accuracy goes from
+          <span class="num">0.9647</span> on shuffled frames to <span class="num">0.9049</span> on
+          whole clips — six points. Two different experiments, run months apart on different data
+          with different metrics, agreeing. The 10 FPS control closes the argument: thin out the
+          near-duplicate frames and the gap collapses to 1.3 points, which is what the leakage
+          explanation predicts and what no rival explanation does.
+        </p>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">2</span><h3>The union's advantage does not survive an honest split</h3></div>
+        <p>
+          Under clip-grouped validation the extended-window union wins
+          (<span class="num">0.9156</span> against <span class="num">0.8806</span>). Under
+          held-out-day validation it loses (<span class="num">0.7856</span> against
+          <span class="num">0.8710</span>). Any claim about the union has to name which validation
+          regime produced it.
+        </p>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">3</span><h3>Architecture is not what drives the result</h3></div>
+        <p>
+          Five architectures, twenty results, one test set. The best four families land within
+          <span class="num">0.118</span> of each other, while a single family spans up to
+          <span class="num">0.454</span> internally depending on regime, data variant and where
+          early stopping fires. And nearly all of that variance lives in the deviation head — the
+          obstacle head is near-saturated across the board. Effort spent on the split and the labels
+          buys more than effort spent on the backbone.
+        </p>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">4</span><h3>The split table mixes two different quantities</h3></div>
+        <p>
+          Train and Validation are post-reduction row counts where frames kept by both heads are
+          counted twice; Test is the raw natural split. Presented in one table headed "extracted
+          frames" this is misleading — the natural pool is
+          <span class="num">41,727 / 7,022 / 3,970</span>. Separately, the printed triple matches no
+          archived run.
+        </p>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">5</span><h3>Post-cut labels decay with distance from the cut</h3></div>
+        <p>
+          Measured, not assumed: frames 11–15 past the cut score <span class="num">1.4</span> points
+          worse than frames 1–10, consistently across the models that work at all. The
+          <code>left</code>/<code>right</code> label stops being true somewhere in that range. A
+          10-frame tail is the better operating point, and the pre-cut identity check makes the
+          comparison airtight.
+        </p>
+      </article>
+
+      <article class="rec">
+        <div class="rec-head"><span class="rec-id">6</span><h3>Errors are overwhelmingly benign</h3></div>
+        <p>
+          On the 10-frame tail the leading model makes <span class="num">4</span> direction
+          inversions in <span class="num">600</span> frames (0.67%); the rest of its error is a
+          fallback to <code>none</code>. For an assistive navigation aid that distinction is the
+          whole safety argument — a silence is recoverable, a wrong turn is not — and it belongs in
+          the paper next to the accuracy figures.
+        </p>
+      </article>
+    </section>
+
+    <section id="open">
+      <div class="series-head">
+        <h2 class="series"><em>Open</em> Threads still to close</h2>
+      </div>
+      <article class="rec">
+        <ul class="plain">
+          <li><b>ConvLSTM has never been trained or scored.</b> It appears only as a data generator. Either run it on the common test set or drop it from the paper's architecture discussion.</li>
+          <li><b>Re-run the archive properly.</b> B1 leaves two to three genuine runs per architecture and no variance. If the paper wants mean ± σ per backbone, those runs have to be redone with real distinct seeds.</li>
+          <li><b>DINOv2 <code>completo</code> at <code>lr 1e-5</code>.</b> The only way to say anything about full fine-tuning; the current run stopped mid-convergence at run4's <code>lr 1e-4</code>.</li>
+          <li><b>A clean union ablation.</b> Train on the union but validate on the distinct validation set only, so baseline and uniao early-stop under identical criteria. Every <code>uniao</code> number so far is confounded.</li>
+          <li><b>The paper's table triple.</b> <span class="num">33,188 / 6,102 / 3,970</span> matches no archived run. Either rerun and quote the new artifact, or repoint the table at run4.</li>
+          <li><b>Rebuild the Drive <code>sense/treino/labels.txt</code>.</b> A3 is diagnosed and has a one-line fix, but the affected dataset has not been rebuilt — and the B3 runs are trained on it.</li>
+          <li><b>Train on the 10-frame windows.</b> V2 only <em>scores</em> existing models on D5; nothing has been trained on it yet.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section id="where">
+      <div class="series-head">
+        <h2 class="series"><em>Index</em> Where everything lives</h2>
+      </div>
+      <article class="rec">
+        <div class="scroller">
+          <table>
+            <caption>Nothing needed lives in a session scratch directory.</caption>
+            <thead><tr><th scope="col">Artifact</th><th scope="col">Location</th></tr></thead>
+            <tbody>
+              <tr><td class="rowlab">Datasets (5)</td><td style="text-align:left">Desktop\sense_run4_*_224\</td></tr>
+              <tr><td class="rowlab">Checkpoints (11)</td><td style="text-align:left">Desktop\sense_run4_experiments\checkpoints\</td></tr>
+              <tr><td class="rowlab">V1 scores</td><td style="text-align:left">…\resultados\eval_matrix.json</td></tr>
+              <tr><td class="rowlab">V2 scores</td><td style="text-align:left">…\resultados\eval_janela10.json</td></tr>
+              <tr><td class="rowlab">Archived runs (B1, B2)</td><td style="text-align:left">…\referencia\sibgrapi_run_stats\run{1-4}_{0-3}.txt</td></tr>
+              <tr><td class="rowlab">Archive originals</td><td style="text-align:left">Desktop\sibgrapi\run{1-4}\final_statistics*.txt</td></tr>
+              <tr><td class="rowlab">Split-strategy runs (B3)</td><td style="text-align:left">Desktop\sibgrapi\mobilenetv4\final_route_accuracy{10,30}fps.json</td></tr>
+              <tr><td class="rowlab">Build / eval / train scripts</td><td style="text-align:left">sensecv\scripts\</td></tr>
+              <tr><td class="rowlab">Kaggle dataset</td><td style="text-align:left">sensecv-run4-sense (919 MB, private)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <b>Superseded artifact.</b> <code>resultados\eval_full_testsets.json</code> holds six
+          models on two views and is an earlier, narrower version of <code>eval_matrix.json</code>;
+          the numbers agree exactly where they overlap. Use <code>eval_matrix.json</code> and
+          <code>eval_janela10.json</code>, which cover more models and more views.
+        </div>
+        <div class="note">
+          <b>Kaggle gotchas that cost time.</b> Batch GPU sessions get a Tesla P100 (sm_60) while the
+          preinstalled torch targets sm_70+ — the trainers detect this, install
+          <code>torch==2.5.1+cu121</code> and re-exec once; the <code>accelerator</code> metadata
+          field is ignored by the API. A kernel's slug comes from its <em>title</em>, not its
+          <code>id</code>, and a mismatch returns 409. Only two concurrent batch GPU sessions.
+          <code>kaggle kernels output</code> serves the last <em>completed</em> version's log, so a
+          running kernel exposes no partial log — poll status instead.
+        </div>
+      </article>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>
+      SenseCV — GPS-free indoor navigation assistance from phone video and IMU.
+      Campaign of 16–19 August 2026, with archived runs recovered from the earlier
+      SIBGRAPI experiments. Full detail in the project wiki under
+      <code>docs/wiki/concepts/</code>; this ledger is the synthesis.
+    </p>
+  </footer>
+
+</div>

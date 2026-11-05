@@ -5,6 +5,53 @@ Append-only. One entry per operation. Greppable prefix:
 
 ---
 
+## [2026-08-17] experiment | DINOv2 fine-tuning ladder and campaign ingest
+- Trained DINOv2 ViT-S/14 two-head on the exact fps5/uniao data path: `ultimos1`
+  (1.78M trainable, 8.1%), `ultimos2` (3.55M, 16.1%) and `completo` (22.06M).
+- `ultimos1` is best: T1 joint 0.8962, T4 0.9194 — the best T4 of any model so
+  far, beating MobileNetV4 full_rate/uniao (0.8607) while training on 8,029
+  frames instead of 34,394. Unfreezing a second block does not help.
+- `completo` scored 0.4426 on T1 but did not diverge: it was still converging
+  when patience ran out. `lr 1e-4` (run4's) is ~10x too high for a full ViT-S
+  fine-tune; the rerun at 1e-5 is an open thread.
+- Moved every script, result, checkpoint and DINOv2 selection out of session
+  scratch into `scripts/` and `Desktop\sense_run4_experiments\`, and repointed
+  the copied scripts at the durable paths.
+- Pages touched: [[dinov2-sense-finetuning]] (new), [[sense-experiments-state]]
+  (new), [[mobilenetv4-sense-experiments]], [[index]].
+
+## [2026-08-16] experiment | MobileNetV4 sense datasets, variants and evaluation matrix
+- Built four datasets in the Drive `sense` tree/label style: the bit-exact run4
+  reproduction (33,118 / 6,172 / 3,970), distinct frames (24,347), distinct +
+  flip (48,694), and left/right clips with the window extended 0.5 s past the
+  cut (10,047 / 1,930 / 2,706, 327 of 328 clips resolved).
+- Trained 8 MobileNetV4 two-head models on Kaggle across four variants (full
+  rate, 5 FPS, DINOv2 0.98, held-out-day validation) x {baseline, uniao}, all on
+  run4's configuration but with both heads trained on every frame.
+- Scored all 8 on 6 test sets; ranking is stable, absolute scores move up to 15
+  points with the test set. full_rate/uniao leads everywhere.
+- Key finding: clip-grouped validation gives val loss 0.0003 versus 0.275 for a
+  genuinely held-out day, and the union's advantage does not survive the honest
+  split. Documented as leakage evidence for the paper.
+- Pages touched: [[sense-style-datasets]] (new), [[allframes-split-provenance]]
+  (new), [[per-head-background-reduction]] (new),
+  [[mobilenetv4-sense-experiments]] (new), [[index]].
+
+## [2026-08-16] query | deviation label join collision in the ConvLSTM datagen
+- Traced the paper's frame table to `*_two_head_all_frames.py`: pool 52,719
+  frames / 608 clips (dataset8 22,781 + dataset9 814 + auto-trim 29,124), fixed
+  day-22/24 test of 3,970, clip-grouped validation, then per-head background
+  reduction; the reported train/val columns are `*_reduced_per_head`.
+- While cross-checking against `sense/` on Drive, found that
+  `convlstm_mobilenetv1_all_frames.py › read_lateral_labels()` joins on
+  `(source_clip, frame_index)`, which is not unique once `_head`/`_tail`
+  suffixes are stripped. Last-wins relabels 2,267 `left` and 2,270 `right`
+  frames as `none`; the test split is unaffected.
+- Reproduced run4's MobileNetV1 dataset bit-exactly (33,118 / 6,172 / 3,970)
+  and materialized it outside the repo, in the `sense` file tree and label
+  style.
+- Pages touched: [[deviation-label-join-collision]] (new), [[index]].
+
 ## [2026-08-12] feature | magnetometer chart in the viewer player
 - `get_clip_data()` now loads `magnetometer.json` (when present) and adds a
   frame-interpolated `magnetometer` field to `/api/data`, alongside `accel`
