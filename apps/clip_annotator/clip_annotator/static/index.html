@@ -203,8 +203,8 @@ tr.row:hover td{background:var(--panel)}
     </div>
     <div class="keys">
       <kbd>Espaço</kbd> reproduzir · <kbd>←</kbd><kbd>→</kbd> quadro · <kbd>Shift</kbd>+<kbd>←</kbd><kbd>→</kbd> 1 s ·
-      <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>D</kbd> desvio · <kbd>P</kbd> parada · <kbd>L</kbd> caminhada livre ·
-      <kbd>Q</kbd>/<kbd>E</kbd> esquerda/direita · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar · <kbd>U</kbd> inutilizável ·
+      <kbd>I</kbd> início · <kbd>O</kbd> fim · <kbd>P</kbd> parada · <kbd>L</kbd> caminhada livre ·
+      <kbd>E</kbd>/<kbd>D</kbd> desvio à esquerda/direita · <kbd>A</kbd> adicionar · <kbd>Esc</kbd> limpar · <kbd>U</kbd> inutilizável ·
       <kbd>[</kbd><kbd>]</kbd> velocidade · <kbd>Enter</kbd> concluir e próximo
     </div>
   </div>
@@ -232,7 +232,7 @@ tr.row:hover td{background:var(--panel)}
       <div class="form-row">
         <label>Tipo de evento</label>
         <div class="radio-group" id="rg-kind">
-          <button class="rchip" data-val="desvio" type="button">Desvio (D)</button>
+          <button class="rchip" data-val="desvio" type="button">Desvio (E/D)</button>
           <button class="rchip" data-val="parada" type="button">Parada (P)</button>
           <button class="rchip" data-val="livre" type="button">Caminhada livre (L)</button>
         </div>
@@ -240,8 +240,8 @@ tr.row:hover td{background:var(--panel)}
       <div class="form-row cond-desvio">
         <label>Direção do desvio (para onde a pessoa vai)</label>
         <div class="radio-group" id="rg-side">
-          <button class="rchip" data-val="esquerda" type="button">Esquerda (Q)</button>
-          <button class="rchip" data-val="direita" type="button">Direita (E)</button>
+          <button class="rchip" data-val="esquerda" type="button">Esquerda (E)</button>
+          <button class="rchip" data-val="direita" type="button">Direita (D)</button>
         </div>
       </div>
       <div class="btn-row">
@@ -309,8 +309,8 @@ tr.row:hover td{background:var(--panel)}
     <table>
       <tbody>
         <tr><td><kbd>Espaço</kbd></td><td>reproduzir / pausar</td><td><kbd>I</kbd> / <kbd>O</kbd></td><td>marcar início / fim</td></tr>
-        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>um quadro</td><td><kbd>D</kbd> / <kbd>P</kbd></td><td>desvio / parada</td></tr>
-        <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>um segundo</td><td><kbd>Q</kbd> / <kbd>E</kbd></td><td>esquerda / direita</td></tr>
+        <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>um quadro</td><td><kbd>P</kbd></td><td>parada</td></tr>
+        <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd></td><td>um segundo</td><td><kbd>E</kbd> / <kbd>D</kbd></td><td>desvio à esquerda / direita</td></tr>
         <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>velocidade</td><td><kbd>L</kbd></td><td>caminhada livre</td></tr>
         <tr><td><kbd>A</kbd></td><td>adicionar / salvar evento</td><td><kbd>Esc</kbd></td><td>limpar marcas / cancelar edição</td></tr>
         <tr><td><kbd>Enter</kbd></td><td>concluir e ir ao próximo</td><td><kbd>U</kbd></td><td>inutilizável</td></tr>
@@ -325,7 +325,7 @@ tr.row:hover td{background:var(--panel)}
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const GUIDE_KEY = "guia_clipes_visto_v2";
+const GUIDE_KEY = "guia_clipes_visto_v3";
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const DEFAULT_SPEED = 2;  // todo clipe começa a tocar sozinho nesta velocidade
 const ZOOM_HALF_S = 3;
@@ -647,8 +647,8 @@ function setChips(groupId, value, disabled) {
 function draftProblem() {
   const d = state.draft;
   if (d.start_s == null) return "Marque o início (I).";
-  if (!d.kind) return "Escolha o tipo: desvio (D) ou parada (P).";
-  if (d.kind === "desvio" && !d.side) return "Escolha a direção do desvio: esquerda (Q) ou direita (E).";
+  if (!d.kind) return "Escolha o tipo: desvio à esquerda (E), desvio à direita (D) ou parada (P).";
+  if (d.kind === "desvio" && !d.side) return "Escolha a direção do desvio: esquerda (E) ou direita (D).";
   if (d.kind === "desvio" && d.end_s == null) return "Um desvio precisa do fim (O).";
   if (d.end_s != null && d.end_s <= d.start_s) return "O fim precisa vir depois do início.";
   const mine = { start_s: d.start_s, end_s: d.end_s };
@@ -979,8 +979,9 @@ document.addEventListener("keydown", (event) => {
   else if (key === "]") { handled(); changeSpeed(1); }
   else {
     const k = key.toLowerCase();
-    const actions = { i: markStart, o: markEnd, a: commitDraft, d: () => setDraft("kind", "desvio"),
-      p: () => setDraft("kind", "parada"), q: () => setDraft("side", "esquerda"), e: () => setDraft("side", "direita"),
+    const actions = { i: markStart, o: markEnd, a: commitDraft,
+      // E/D marcam o desvio e já escolhem a direção (setDraft("side") define o tipo como desvio).
+      p: () => setDraft("kind", "parada"), e: () => setDraft("side", "esquerda"), d: () => setDraft("side", "direita"),
       l: () => setVerdict(FREE_WALK), u: () => setVerdict(UNUSABLE) };
     if (actions[k]) { handled(); actions[k](); }
   }
