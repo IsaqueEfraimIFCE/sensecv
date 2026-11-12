@@ -18,9 +18,12 @@ The cut comes from the viewer's manifest export
 manifest event type + direction, `suggest_deviation_cut` window) and is bundled
 as `clip_annotator/data/auto_cuts.json` (562 clips of the 13 June-July
 collections; later collections have no manifest, ASSAI is not published). It is
-drawn as a dashed yellow band on the timelines, the clip autoplays from 1 s before
-it, and it is prefilled into the event form
-of a clip with nothing annotated yet; nothing is saved until the annotator adds
+drawn as a dashed yellow band on the timelines and the clip autoplays from 1 s
+before it. The cut is the 1 s *decision window before* the event (the viewer's
+default 'decisao' window, [T1 - 1 s, T1]), so the event form is prefilled with
+start = the cut's end (T1) and the type; the end (O) is left to the annotator.
+The form is prefilled only
+for a clip with nothing annotated yet; nothing is saved until the annotator adds
 the event (A). Rebuild it after a new export:
 
 ```

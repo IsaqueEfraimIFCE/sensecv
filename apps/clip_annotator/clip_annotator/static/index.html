@@ -285,8 +285,9 @@ tr.row:hover td{background:var(--panel)}
       Ninguém vê o trabalho dos outros anotadores.</p>
     <p>A lista mostra só os clipes com <strong>desvio</strong>; escolha <em>todos os clipes</em> no topo da lista para ver os demais.
       Quando a coleta original tem um <strong>corte automático</strong> para o clipe, ele aparece como uma faixa amarela
-      tracejada na linha do tempo e já vem preenchido no formulário (início, fim e tipo). É só um ponto de partida:
-      confira no vídeo, ajuste o início (<kbd>I</kbd>) e o fim (<kbd>O</kbd>) aos critérios abaixo e só então adicione (<kbd>A</kbd>).</p>
+      tracejada na linha do tempo. Essa faixa é o segundo <em>antes</em> do evento: o desvio (ou a parada) começa no fim dela,
+      e é aí que o início (<kbd>I</kbd>) já vem marcado no formulário, junto com o tipo. É só um ponto de partida:
+      confira no vídeo, ajuste o início (<kbd>I</kbd>), marque o fim (<kbd>O</kbd>) pelos critérios abaixo e só então adicione (<kbd>A</kbd>).</p>
 
     <h3>Passo a passo</h3>
     <ol>
@@ -341,7 +342,7 @@ tr.row:hover td{background:var(--panel)}
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const GUIDE_KEY = "guia_clipes_visto_v4";
+const GUIDE_KEY = "guia_clipes_visto_v5";
 const FILTER_KEY = "filtro_clipes";
 const AUTO_KIND_NAMES = { desvio: "Desvio", parada: "Parada", livre: "Caminhada livre" };
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -405,11 +406,13 @@ function autoName(cut) {
   return cut.kind === "desvio" ? `Desvio à ${SIDE_NAMES[cut.side]}` : AUTO_KIND_NAMES[cut.kind];
 }
 function autoText(cut) { return cut ? `${autoName(cut)} · ${fmt(cut.start_s)}–${fmt(cut.end_s)} s` : "–"; }
-/** O corte automático vira o rascunho (desvio/parada); caminhada livre não tem trecho. */
+/** O corte automático é a janela de 1 s ANTES do evento ([T1 - 1 s, T1]): o evento começa
+ *  no fim do corte. O rascunho já vem com esse início (I) e o tipo; o fim (O) fica para o anotador.
+ *  Caminhada livre não tem trecho. */
 function draftFromAuto(cut) {
   if (!cut || cut.kind === "livre") return emptyDraft();
   const side = cut.kind === "desvio" ? cut.side : null;
-  return { start_s: cut.start_s, end_s: cut.end_s, kind: cut.kind, side,
+  return { start_s: cut.end_s, end_s: null, kind: cut.kind, side,
            obstacle: side ? OPPOSITE_SIDE[side] : null };
 }
 
@@ -759,7 +762,8 @@ function renderDraft() {
   const cut = state.clip && state.clip.auto;
   $("auto-cut").classList.toggle("hidden", !cut);
   if (cut) {
-    $("auto-cut-text").textContent = `Corte automático da coleta: ${autoText(cut)}`;
+    $("auto-cut-text").textContent = cut.kind === "livre" ? `Corte automático da coleta: ${autoText(cut)}`
+      : `Corte automático da coleta: ${autoText(cut)} (1 s antes do evento; início sugerido ${fmt(cut.end_s)} s)`;
     $("btn-auto").classList.toggle("hidden", cut.kind === "livre");
     $("btn-auto").disabled = state.ann.done;
   }
@@ -770,7 +774,7 @@ function useAutoCut() {
   if (state.ann.done || !cut || cut.kind === "livre") return;
   state.draft = draftFromAuto(cut);
   state.editing = null;
-  seek(cut.start_s);
+  seek(cut.end_s);
   renderAll();
 }
 
