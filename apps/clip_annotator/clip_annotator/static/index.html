@@ -347,6 +347,7 @@ const AUTO_KIND_NAMES = { desvio: "Desvio", parada: "Parada", livre: "Caminhada 
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const DEFAULT_SPEED = 2;  // todo clipe começa a tocar sozinho nesta velocidade
 const ZOOM_HALF_S = 3;
+const AUTOPLAY_LEAD_S = 1;  // o clipe com corte automático começa a tocar 1 s antes dele
 const KIND_NAMES = { desvio: "Desvio", parada: "Parada" };
 const SIDE_NAMES = { esquerda: "esquerda", direita: "direita" };
 const STATUS_NAMES = { pendente: "Pendente", andamento: "Em andamento", concluido: "Concluído" };
@@ -538,6 +539,8 @@ async function loadClip(clipId) {
   $("video-msg").classList.add("hidden");
   $("speed").value = String(DEFAULT_SPEED);
   state.autoplay = true;  // começa a tocar assim que os metadados chegarem
+  // ... 1 s antes do corte automático, quando houver um (caminhada livre começa em 0).
+  state.autoplayFrom = clip.auto ? Math.max(0, clip.auto.start_s - AUTOPLAY_LEAD_S) : 0;
   video.src = clip.video_url;
   video.playbackRate = DEFAULT_SPEED;
   setSaveState("");
@@ -556,6 +559,7 @@ video.addEventListener("loadedmetadata", () => {
   drawTimelines();
   if (state.autoplay) {  // o vídeo é mudo, então o navegador permite tocar sem clique
     state.autoplay = false;
+    if (state.autoplayFrom > 0) video.currentTime = Math.min(state.autoplayFrom, duration());
     video.play().catch(() => {});
   }
 });

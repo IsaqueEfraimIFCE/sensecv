@@ -18,7 +18,8 @@ The cut comes from the viewer's manifest export
 manifest event type + direction, `suggest_deviation_cut` window) and is bundled
 as `clip_annotator/data/auto_cuts.json` (562 clips of the 13 June-July
 collections; later collections have no manifest, ASSAI is not published). It is
-drawn as a dashed yellow band on the timelines and prefilled into the event form
+drawn as a dashed yellow band on the timelines, the clip autoplays from 1 s before
+it, and it is prefilled into the event form
 of a clip with nothing annotated yet; nothing is saved until the annotator adds
 the event (A). Rebuild it after a new export:
 
