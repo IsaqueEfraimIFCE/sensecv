@@ -67,8 +67,8 @@ def test_list_shows_full_clips_only(client):
     assert [c["clip_id"] for c in clips] == [
         CLIP, "SenseCV-01-01-2026-EXEMPLO__08", "SenseCV-02-01-2026-OUTRO__01"]
     assert clips[0] == {"clip_id": CLIP, "location": "SenseCV-01-01-2026-EXEMPLO",
-                        "recording": "07", "duration_s": 1.2, "status": "pendente",
-                        "events": 0, "verdict": None}
+                        "recording": "07", "duration_s": 1.2, "auto": None,
+                        "status": "pendente", "events": 0, "verdict": None}
 
 
 def test_get_clip_hides_the_video_ref(client):
@@ -204,3 +204,19 @@ def test_failure_limiter_forgets_quiet_clients():
 
 def test_health_is_public(client):
     assert client.get("/api/health").get_json() == {"unsynced": 0, "ok": True}
+
+
+CUT = {"kind": "desvio", "side": "esquerda", "start_s": 0.2, "end_s": 0.9}
+
+
+def test_auto_cuts_reach_the_list_and_the_clip(tmp_path, dataset):
+    index = IndexDb(tmp_path / "index.sqlite")
+    build_local_index(dataset, index)
+    client = create_app(index=index, store=LocalDirStore(tmp_path / "ann"), tokens={ANA: "ana"},
+                        auto_cuts={CLIP: CUT}).test_client()
+    clips = client.get("/api/clips", headers=as_(ANA)).get_json()["clips"]
+    assert {c["clip_id"]: c["auto"] for c in clips} == {
+        CLIP: CUT, "SenseCV-01-01-2026-EXEMPLO__08": None, "SenseCV-02-01-2026-OUTRO__01": None}
+    data = client.get(f"/api/clips/{CLIP}", headers=as_(ANA)).get_json()
+    assert data["auto"] == CUT
+    assert data["annotation"]["events"] == []  # a suggestion is never saved as an event

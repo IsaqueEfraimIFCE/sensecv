@@ -13,6 +13,7 @@ import json
 import secrets
 from pathlib import Path
 
+from . import auto_cuts
 from .app import create_app
 from .index_db import IndexDb
 from .publish import build_local_index
@@ -41,7 +42,7 @@ def make_dev_app(dataset, data, annotators=("dev",)):
     build_local_index(dataset, index)
     tokens = _tokens(data, annotators)
     app = create_app(index=index, store=LocalDirStore(data / "annotations"), tokens=tokens,
-                     video_source=LocalVideoSource(dataset))
+                     video_source=LocalVideoSource(dataset), auto_cuts=auto_cuts.load())
     return app, tokens, index
 
 

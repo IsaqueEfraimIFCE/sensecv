@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Mapping
 
+from . import auto_cuts
 from .app import create_app
 from .drive_store import DriveEventStore
 from .events import is_safe_id
@@ -57,6 +58,11 @@ def _ensure_index(drive, videos_folder: str, path: Path, force: bool) -> None:
     os.replace(tmp, path)
 
 
+def _auto_cuts(env: Mapping) -> dict:
+    """The bundled automatic cuts (``AUTO_CUTS_JSON`` overrides the path)."""
+    return auto_cuts.load(env.get("AUTO_CUTS_JSON") or auto_cuts.DEFAULT_PATH)
+
+
 def _build_volume_app(env: Mapping, tokens: dict):
     """Everything on the server's data volume: ``index.sqlite``, ``videos/`` (a
     ``publish --bundle`` copied over) and ``annotations/``. No Google account
@@ -73,6 +79,7 @@ def _build_volume_app(env: Mapping, tokens: dict):
         video_source=LocalVideoSource(data / "videos"),
         secure_cookies=True,
         client_ip_header=env.get("CLIENT_IP_HEADER", "Fly-Client-IP"),
+        auto_cuts=_auto_cuts(env),
     )
 
 
@@ -102,6 +109,7 @@ def build_app(env: Mapping, drive=None):
                                        cache_mb * 1_000_000),
         secure_cookies=True,
         client_ip_header=env.get("CLIENT_IP_HEADER", "Fly-Client-IP"),
+        auto_cuts=_auto_cuts(env),
     )
 
 

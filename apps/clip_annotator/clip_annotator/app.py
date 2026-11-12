@@ -89,16 +89,20 @@ def create_app(
     client_ip_header: Optional[str] = None,
     max_failures: int = LOGIN_MAX_FAILURES,
     failure_window_sec: float = LOGIN_WINDOW_SEC,
+    auto_cuts: Optional[dict] = None,
 ) -> Flask:
     """``tokens`` maps secret token -> annotator id. ``video_source.path(ref)``
     returns a local file for a clip's ``video_ref``. Set ``secure_cookies=True``
     when TLS is terminated in front of the app (e.g. Fly.io), and
     ``client_ip_header`` to the header the proxy fills with the real client
     address (``Fly-Client-IP``): behind a proxy ``remote_addr`` is the proxy,
-    and one person's wrong guesses would lock every annotator out."""
+    and one person's wrong guesses would lock every annotator out.
+    ``auto_cuts`` maps clip id -> the original dataset's automatic cut
+    (``auto_cuts.load()``); each clip carries it as ``auto`` (or None)."""
     app = Flask(__name__, static_folder=None)
     app.config["MAX_CONTENT_LENGTH"] = MAX_BODY_BYTES
     app.extensions["event_store"] = store  # lets the entry point flush on shutdown
+    cuts = dict(auto_cuts or {})
     limiter = FailureLimiter(max_failures, failure_window_sec)
     known = [(hashlib.sha256(t.encode()).digest(), who) for t, who in tokens.items()]
     annotator_locks: dict = defaultdict(threading.Lock)
@@ -165,6 +169,7 @@ def create_app(
             "fps": clip.fps,
             "frame_count": clip.frame_count,
             "video_url": f"/video/{quote(clip.clip_id, safe='')}",
+            "auto": cuts.get(clip.clip_id),
             "annotation": doc.to_json(),
         }
 
@@ -238,7 +243,8 @@ def create_app(
         blank = {"status": "pendente", "events": 0, "verdict": None}
         return jsonify({"clips": [
             {"clip_id": c.clip_id, "location": c.location, "recording": c.recording,
-             "duration_s": c.duration_s, **summaries.get(c.clip_id, blank)}
+             "duration_s": c.duration_s, "auto": cuts.get(c.clip_id),
+             **summaries.get(c.clip_id, blank)}
             for c in index.clips()
         ]})
 

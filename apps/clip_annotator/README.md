@@ -7,8 +7,27 @@ storage and deploy design) and looks like the SenseCV viewer (`src/sensecv`):
 same colour tokens, video + canvas timeline + frame-step bar, and the
 crop-form chips (Desvio/Parada, Esquerda/Direita, obstacle position).
 
-No existing label is shown. Each annotator's work is stored separately and can
-be resumed at any time. The interface is in Portuguese.
+Each annotator's work is stored separately and can be resumed at any time. The
+interface is in Portuguese.
+
+**Deviation clips first, automatic cuts as a starting point.** The list shows
+only clips whose original-dataset automatic cut is a `desvio` (344 of 1045);
+"todos os clipes" in the list header reveals the rest (choice kept per browser).
+The cut comes from the viewer's manifest export
+(`data/derived/manifest_exports/Todos_cortes_auto_trim/deviation/sources.csv`:
+manifest event type + direction, `suggest_deviation_cut` window) and is bundled
+as `clip_annotator/data/auto_cuts.json` (562 clips of the 13 June-July
+collections; later collections have no manifest, ASSAI is not published). It is
+drawn as a dashed yellow band on the timelines and prefilled into the event form
+of a clip with nothing annotated yet; nothing is saved until the annotator adds
+the event (A). Rebuild it after a new export:
+
+```
+python -m clip_annotator.auto_cuts --ledger <sources.csv> --clips clips.json
+```
+
+(`clips.json` = the `/api/clips` answer, to check ids and durations; the ledger
+names collections day-first, clip ids are month-first.)
 
 ## What gets annotated
 

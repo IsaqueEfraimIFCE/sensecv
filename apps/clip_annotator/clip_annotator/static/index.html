@@ -90,6 +90,9 @@ kbd{background:var(--panel-2);border:1px solid var(--border);border-bottom-width
 .btn.danger{background:#3a1a1a;border-color:#6a2d2d;color:#ff6b6b}
 .input-hint{font-size:var(--fs-xs);color:var(--muted);margin-top:6px}
 .input-hint.err{color:var(--red)}
+.auto-cut{font-size:var(--fs-xs);color:#e3b341;margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.auto-cut .set-btn{width:auto;padding:3px 10px}
+.list-tools select{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px 8px;font:inherit}
 textarea{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:var(--radius-sm);padding:8px 11px;font-size:var(--fs-sm);width:100%;font-family:inherit;resize:vertical;min-height:54px}
 textarea:focus{outline:none;border-color:var(--accent)}
 
@@ -169,10 +172,15 @@ tr.row:hover td{background:var(--panel)}
   </div>
   <div class="list-tools">
     <button class="btn primary" id="continue" type="button">Continuar do próximo pendente</button>
+    <label class="muted">Mostrar
+      <select id="clip-filter" aria-label="Quais clipes mostrar">
+        <option value="desvio">somente clipes com desvio</option>
+        <option value="todos">todos os clipes</option>
+      </select></label>
     <label class="muted"><input type="checkbox" id="only-open"> mostrar só os clipes não concluídos</label>
   </div>
   <table>
-    <thead><tr><th>Coleta</th><th>Gravação</th><th>Duração</th><th>Situação</th><th>Resultado</th></tr></thead>
+    <thead><tr><th>Coleta</th><th>Gravação</th><th>Duração</th><th>Corte automático</th><th>Situação</th><th>Resultado</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </section>
@@ -249,6 +257,10 @@ tr.row:hover td{background:var(--panel)}
         <button class="btn hidden" id="btn-cancel" type="button">Cancelar edição</button>
       </div>
       <div class="input-hint" id="draft-hint">Marque o início e o fim, escolha o tipo e adicione.</div>
+      <div class="auto-cut hidden" id="auto-cut">
+        <span id="auto-cut-text"></span>
+        <button class="set-btn small" id="btn-auto" type="button" title="Preencher o formulário com o corte automático">↺ usar como ponto de partida</button>
+      </div>
     </div>
 
     <div class="section">
@@ -270,7 +282,11 @@ tr.row:hover td{background:var(--panel)}
     <h2>Guia de anotação de clipes</h2>
     <p>Cada clipe é uma gravação inteira de uma pessoa caminhando com o celular. Você vai assistir ao clipe
       todo e marcar <strong>quando</strong> acontece cada evento e <strong>de que tipo</strong> ele é.
-      Ninguém vê o trabalho dos outros anotadores, e nenhum rótulo existente é mostrado.</p>
+      Ninguém vê o trabalho dos outros anotadores.</p>
+    <p>A lista mostra só os clipes com <strong>desvio</strong>; escolha <em>todos os clipes</em> no topo da lista para ver os demais.
+      Quando a coleta original tem um <strong>corte automático</strong> para o clipe, ele aparece como uma faixa amarela
+      tracejada na linha do tempo e já vem preenchido no formulário (início, fim e tipo). É só um ponto de partida:
+      confira no vídeo, ajuste o início (<kbd>I</kbd>) e o fim (<kbd>O</kbd>) aos critérios abaixo e só então adicione (<kbd>A</kbd>).</p>
 
     <h3>Passo a passo</h3>
     <ol>
@@ -325,7 +341,9 @@ tr.row:hover td{background:var(--panel)}
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-const GUIDE_KEY = "guia_clipes_visto_v3";
+const GUIDE_KEY = "guia_clipes_visto_v4";
+const FILTER_KEY = "filtro_clipes";
+const AUTO_KIND_NAMES = { desvio: "Desvio", parada: "Parada", livre: "Caminhada livre" };
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const DEFAULT_SPEED = 2;  // todo clipe começa a tocar sozinho nesta velocidade
 const ZOOM_HALF_S = 3;
@@ -341,7 +359,7 @@ const COLORS = { esquerda: "#86c5ff", direita: "#c79bff", parada: "#ff6b61" };
 
 const video = $("video");
 const state = {
-  view: "login", returnTo: "list", clips: [], clip: null,
+  view: "login", returnTo: "list", allClips: [], clips: [], clip: null,
   ann: { events: [], verdict: null, done: false, note: "" },
   draft: null, editing: null,
 };
@@ -382,6 +400,17 @@ function eventName(e) {
   return e.kind === "desvio" ? `Desvio à ${SIDE_NAMES[e.side]}` : KIND_NAMES[e.kind];
 }
 function emptyDraft() { return { start_s: null, end_s: null, kind: null, side: null, obstacle: null }; }
+function autoName(cut) {
+  return cut.kind === "desvio" ? `Desvio à ${SIDE_NAMES[cut.side]}` : AUTO_KIND_NAMES[cut.kind];
+}
+function autoText(cut) { return cut ? `${autoName(cut)} · ${fmt(cut.start_s)}–${fmt(cut.end_s)} s` : "–"; }
+/** O corte automático vira o rascunho (desvio/parada); caminhada livre não tem trecho. */
+function draftFromAuto(cut) {
+  if (!cut || cut.kind === "livre") return emptyDraft();
+  const side = cut.kind === "desvio" ? cut.side : null;
+  return { start_s: cut.start_s, end_s: cut.end_s, kind: cut.kind, side,
+           obstacle: side ? OPPOSITE_SIDE[side] : null };
+}
 
 function show(view) {
   state.view = view;
@@ -405,9 +434,33 @@ async function closeGuide() {
 }
 
 // ── lista ──────────────────────────────────────
+function clipFilter() {
+  try { return localStorage.getItem(FILTER_KEY) === "todos" ? "todos" : "desvio"; } catch (e) { return "desvio"; }
+}
+function setClipFilter(value) {
+  try { localStorage.setItem(FILTER_KEY, value); } catch (e) { /* modo privado */ }
+  applyFilter();
+  renderList();
+}
+const isDeviation = (c) => !!(c.auto && c.auto.kind === "desvio");
+/** ``state.clips`` é o que se navega (lista, contador, anterior/próximo, Enter):
+ *  só os desvios, a não ser que "todos os clipes" esteja escolhido. */
+function applyFilter() {
+  const all = clipFilter() === "todos";
+  state.clips = all ? state.allClips : state.allClips.filter(isDeviation);
+  const select = $("clip-filter");
+  select.value = all ? "todos" : "desvio";
+  select.options[0].textContent = `somente clipes com desvio (${state.allClips.filter(isDeviation).length})`;
+  select.options[1].textContent = `todos os clipes (${state.allClips.length})`;
+}
+async function refreshClips() {
+  state.allClips = (await api("/api/clips")).clips;
+  applyFilter();
+}
+
 async function loadList() {
   await waitSaved();
-  state.clips = (await api("/api/clips")).clips;
+  await refreshClips();
   renderList();
   show("list");
 }
@@ -444,6 +497,7 @@ function renderList() {
     cell(tr, c.location);
     cell(tr, c.recording);
     cell(tr, fmtDur(c.duration_s));
+    cell(tr, autoText(c.auto));
     cell(tr, statusChip(c.status));
     cell(tr, resultText(c));
     tr.addEventListener("click", () => openClip(c.clip_id));
@@ -472,7 +526,9 @@ async function loadClip(clipId) {
   catch (error) { toast(error.message); return; }
   state.clip = clip;
   state.ann = { ...clip.annotation, events: clip.annotation.events.map((e) => ({ ...e })) };
-  state.draft = emptyDraft();
+  // Clipe ainda sem nada anotado: o corte automático da coleta é o ponto de partida.
+  const fresh = !state.ann.done && !state.ann.verdict && !state.ann.events.length;
+  state.draft = fresh ? draftFromAuto(clip.auto) : emptyDraft();
   state.editing = null;
   $("clip-badge").textContent = `${clip.location} / ${clip.recording}`;
   const idx = state.clips.findIndex((c) => c.clip_id === clipId);
@@ -572,6 +628,18 @@ function drawRange(canvas, t0, t1, { tickEvery, labelEvery, frames }) {
     ctx.fillStyle = labelled ? "rgba(154,166,178,.55)" : "rgba(154,166,178,.25)";
     ctx.fillRect(x(t), 0, 1, labelled ? 9 : 5);
     if (labelled) ctx.fillText(labelEvery < 1 ? t.toFixed(1) : String(Math.round(t)), x(t) + 3, 10);
+  }
+  // corte automático da coleta original (faixa tracejada)
+  const cut = state.clip.auto;
+  if (cut) {
+    const xs = x(cut.start_s), xe = x(cut.end_s);
+    ctx.fillStyle = "rgba(227,179,65,.10)";
+    ctx.fillRect(xs, 0, Math.max(2, xe - xs), h);
+    ctx.strokeStyle = "rgba(227,179,65,.75)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(xs + 0.5, 0.5, Math.max(2, xe - xs) - 1, h - 1);
+    ctx.setLineDash([]);
   }
   // eventos salvos
   state.ann.events.forEach((e, i) => {
@@ -684,6 +752,22 @@ function renderDraft() {
     : freeWalk && untouched ? "Caminhada livre: conclua o clipe (Enter)."
     : untouched ? "Marque o início e o fim, escolha o tipo e adicione." : problem || "Pronto para adicionar.";
   $("draft-hint").classList.toggle("err", !!problem && !untouched && !state.ann.done);
+  const cut = state.clip && state.clip.auto;
+  $("auto-cut").classList.toggle("hidden", !cut);
+  if (cut) {
+    $("auto-cut-text").textContent = `Corte automático da coleta: ${autoText(cut)}`;
+    $("btn-auto").classList.toggle("hidden", cut.kind === "livre");
+    $("btn-auto").disabled = state.ann.done;
+  }
+}
+
+function useAutoCut() {
+  const cut = state.clip && state.clip.auto;
+  if (state.ann.done || !cut || cut.kind === "livre") return;
+  state.draft = draftFromAuto(cut);
+  state.editing = null;
+  seek(cut.start_s);
+  renderAll();
 }
 
 function renderEvents() {
@@ -842,7 +926,7 @@ function reopenClip() { state.ann = { ...state.ann, done: false }; renderAll(); 
 
 async function goNext() {
   if (!(await waitSaved())) { toast("A última alteração foi recusada; confira o clipe antes de seguir."); return; }
-  state.clips = (await api("/api/clips")).clips;
+  await refreshClips();
   const next = nextPendingAfter(state.clip.clip_id);
   if (next) openClip(next.clip_id);
   else { toast("Todos os clipes estão concluídos — obrigado!", true); loadList(); }
@@ -957,6 +1041,8 @@ $("btn-guide").addEventListener("click", openGuide);
 $("guide-done").addEventListener("click", closeGuide);
 $("link-guide").addEventListener("click", (event) => { event.preventDefault(); openGuide(); });
 $("only-open").addEventListener("change", renderList);
+$("clip-filter").addEventListener("change", (event) => setClipFilter(event.target.value));
+$("btn-auto").addEventListener("click", useAutoCut);
 $("continue").addEventListener("click", () => {
   const next = state.clips.find((c) => c.status !== "concluido");
   if (next) openClip(next.clip_id); else toast("Todos os clipes estão concluídos — obrigado!", true);
